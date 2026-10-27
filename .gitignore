@@ -10,6 +10,9 @@ target/
 .vscode/
 .DS_Store
 
+# Local audit copies, generated test credentials and evidence must never be staged.
+audit-results/
+
 # Log
 *.log
 logs/

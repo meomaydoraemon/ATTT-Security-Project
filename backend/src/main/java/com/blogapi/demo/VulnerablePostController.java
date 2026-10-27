@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.*;
 
 /**
  * Deliberately vulnerable copies of the original Post endpoints, for the comparison demos only.
- * Same conditions as the SQLi lab: they exist only in the isolated lab API (own identity DB and JWT key).
+ * Enabled only with the sqli-lab profile AND the explicit demo flag.
+ * Unlike SQLi fixtures, these endpoints share blogdb: use disposable fake data on loopback only.
  * Secure counterparts on the main backend: GET/PUT/DELETE /api/v1/posts/{id}.
  */
 @RestController

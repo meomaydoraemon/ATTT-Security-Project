@@ -4,9 +4,10 @@ set -eu
 # chỉ-đọc "sqli_demo_reader". Dùng cho cụm API lỗi /api/v1/vuln (Demo 2, 3).
 #
 # Vì sao vẫn an toàn dù cố ý để lỗ hổng SQLi: PostgreSQL không cho một câu lệnh SELECT
-# truy vấn chéo sang database khác. Reader chỉ CONNECT được vào sqli_lab, chỉ SELECT bảng
+# truy vấn chéo sang database khác. Reader được CONNECT sqli_lab nhưng không CONNECT blogdb, chỉ SELECT bảng
 # demo.records, và bị đặt read-only. Nên dù bị ' OR 1=1 hay UNION, kẻ tấn công vẫn không
-# chạm được bảng public.users của blogdb.
+# chạm được bảng public.users của blogdb. Reader vẫn có các grant CONNECT mặc định
+# của PUBLIC trên postgres/template; không tuyên bố chỉ CONNECT được duy nhất sqli_lab.
 : "${SQLI_LAB_READER_PASSWORD:?SQLI_LAB_READER_PASSWORD is required}"
 
 # Chạy ngoài transaction: CREATE DATABASE không nằm trong khối BEGIN được.

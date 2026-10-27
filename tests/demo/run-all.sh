@@ -1,9 +1,11 @@
 #!/bin/sh
 # Chạy lần lượt mọi demo. Yêu cầu hệ thống đang chạy:
 #   docker compose up -d --build --wait
+set -eu
 # Dùng: sh tests/demo/run-all.sh
 cd "$(dirname "$0")"
 FAILED=""
+sh ./test-evidence-guards.sh
 for d in demo1-failover demo2-waf-virtual-patch demo3-defense-in-depth demo4-idor demo5-ratelimit-audit; do
     sh "./$d.sh" || FAILED="$FAILED $d"
 done

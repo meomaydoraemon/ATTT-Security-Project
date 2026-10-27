@@ -8,6 +8,8 @@ Các quyết định đã chốt cho hệ thống. Cập nhật lần cuối: 27
 
 ## D2. Kiến trúc: đúng 4 container, 2 mạng
 
+- Sau kiểm toán: gateway chỉ bind loopback; HTTPS_PORT đổi cổng, không đổi địa chỉ bind. SQLI_DEMO_ENABLED mặc định false; `init-env.sh --lab` mới bật tường minh. Toàn bộ dữ liệu phải là giả; vulnerable Post vẫn dùng blogdb, không được áp dụng mô tả cách ly SQLi Record cho Post. Gateway health chỉ là liveness; dùng preflight end-to-end.
+
 - `nginx-waf`, `backend-node-1`, `backend-node-2`, `database`. Hai mạng `dmz_net` và `internal_net` (`internal: true`).
 - Cụm API lỗi `/api/v1/vuln` chạy **ngay trên 2 node backend chính** (bật profile `sqli-lab` và `SQLI_DEMO_ENABLED=true`), song song với cụm vá `/api/v1/secure`. Dùng chung token, JWT secret và CSDL — khớp mục 3 đề cương.
 - Dữ liệu cho phần SQLi nằm ở database `sqli_lab` **riêng trong cùng container `database`**, truy cập bằng tài khoản chỉ-đọc `sqli_demo_reader` (`database/init/04-sqli-demo.sh`). PostgreSQL không cho một câu lệnh truy vấn chéo database, nên SQLi ở cụm `/vuln` không chạm được bảng `public.users` của `blogdb`.
@@ -45,7 +47,7 @@ Cụm `/secure/posts` dùng chung tầng Service (có Ownership Check) với rou
 - Backend (profile `integration`) bật `forward-headers-strategy: native` nhưng chỉ tin proxy có IP khớp `TRUSTED_PROXY_REGEX` (IP cố định của `nginx-waf`). Request từ nơi khác, kể cả header giả, vẫn ghi IP của socket.
 - Nginx sinh `X-Request-ID` (`$request_id`), đồng thời đặt làm transaction ID của ModSecurity. Một mã đối chiếu được giữa log Nginx (`rid=`), `modsec_audit.log` (`unique_id`) và log backend (`reqId=`).
 - **Audit log tập trung**: mọi log ghi ra thư mục `logs/` trên máy host: `logs/nginx/`, `logs/waf/modsec_audit.log`, `logs/backend-node-1/audit.log`, `logs/backend-node-2/audit.log`. Mẫu log backend có `reqId`, `user` và `ip` (IP client thật), gồm cả sự kiện đăng nhập, bị từ chối 401/403, sửa/xóa dữ liệu.
-- `modsec_audit.log` (JSON) chỉ ghi phần A, H, K, Z: không có header và body request, nên không lộ JWT, mật khẩu.
+- `modsec_audit.log` (JSON) chỉ ghi phần A, H, K, Z: bỏ header/body request; matched data vẫn cần rà soát và che dữ liệu nhạy cảm trước khi chia sẻ.
 - File audit của backend bỏ dòng healthcheck nội bộ của Docker (`/actuator/health` từ 127.0.0.1, mỗi 10 giây) bằng bộ lọc `LocalHealthCheckLogFilter`, chỉ gắn vào file; healthcheck đi qua Nginx vẫn được ghi. Thời gian trong file ghi kèm múi giờ (`Z` = UTC).
 - Chuyển chế độ WAF bằng `sh scripts/waf-mode.sh On|DetectionOnly`: kiểm tra giá trị hợp lệ, in chế độ đang chạy, cảnh báo khi đang DetectionOnly.
 

@@ -17,6 +17,7 @@ import java.util.List;
 @AllArgsConstructor
 @Builder
 public class Post {
+    public static final int MAX_SLUG_LENGTH = 200;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -25,7 +26,7 @@ public class Post {
     @Column(nullable = false)
     private String title;
 
-    @Column(nullable = false, unique = true, length = 200)
+    @Column(nullable = false, unique = true, length = MAX_SLUG_LENGTH)
     private String slug;
 
     @Column(nullable = false, columnDefinition = "TEXT")

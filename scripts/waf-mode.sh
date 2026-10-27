@@ -1,23 +1,26 @@
 #!/bin/sh
 # Đổi chế độ WAF mà không phải sửa .env. Chạy từ thư mục gốc repo (Git Bash):
 #   sh scripts/waf-mode.sh               # xem chế độ đang chạy
-#   sh scripts/waf-mode.sh DetectionOnly # chỉ ghi log, không chặn (Demo 3: giả lập WAF bị lách luật)
+#   sh scripts/waf-mode.sh DetectionOnly # chủ động không chặn để đo lớp phòng thủ sau
 #   sh scripts/waf-mode.sh On            # chặn (mặc định, Demo 2)
 # Chỉ khởi động lại container nginx-waf (vài giây); backend và database không bị ảnh hưởng.
 set -eu
 cd "$(dirname "$0")/.."
 
 current() {
-    if MSYS_NO_PATHCONV=1 docker compose exec -T nginx-waf grep -q 'SecRuleEngine DetectionOnly' /etc/nginx/modsecurity-mode.conf 2>/dev/null; then
-        echo DetectionOnly
-    else
-        echo On
-    fi
+    # Read both effective include files: a failed exec is not evidence of On.
+    config=$(MSYS_NO_PATHCONV=1 docker compose exec -T nginx-waf cat \
+        /etc/nginx/modsecurity/modsecurity.conf /etc/nginx/modsecurity-mode.conf) \
+        || { echo "Không đọc được cấu hình WAF thực tế." >&2; return 1; }
+    mode=$(printf '%s\n' "$config" | awk '$1 == "SecRuleEngine" {mode=$2} END {print mode}')
+    case "$mode" in On|DetectionOnly) printf '%s\n' "$mode" ;;
+        *) echo "Không xác định được SecRuleEngine." >&2; return 1 ;; esac
 }
 
 case "${1:-}" in
     "")
-        echo "WAF đang ở chế độ: $(current)" ;;
+        mode=$(current) || exit 1
+        echo "WAF đang ở chế độ: $mode" ;;
     On|DetectionOnly)
         WAF_MODE=$1 docker compose up -d --no-deps --force-recreate --wait nginx-waf >/dev/null
         mode=$(current)

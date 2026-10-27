@@ -38,7 +38,7 @@ public class PostServiceImpl implements PostService {
     public PostDetailResponse create(CreatePostRequest request, String username) {
         User author = findUserOrThrow(username);
 
-        String slug = ensureUniqueSlug(SlugUtils.toSlug(request.title()));
+        String slug = ensureUniqueSlug(SlugUtils.toSlug(request.title()), null);
 
         Category category = null;
         if (request.categoryId() != null) {
@@ -68,9 +68,9 @@ public class PostServiceImpl implements PostService {
         assertOwnerOrAdmin(post, username);
 
         if (request.title() != null && !request.title().isBlank()) {
-            String newSlug = SlugUtils.toSlug(request.title());
-            if (!post.getSlug().equals(newSlug)) {
-                post.setSlug(ensureUniqueSlug(newSlug));
+            // Preserve an existing URL when the title itself is unchanged.
+            if (!post.getTitle().equals(request.title())) {
+                post.setSlug(ensureUniqueSlug(SlugUtils.toSlug(request.title()), post.getId()));
             }
             post.setTitle(request.title());
         }
@@ -169,13 +169,15 @@ public class PostServiceImpl implements PostService {
         postReadAccessPolicy.assertCanRead(post, username);
     }
 
-    private String ensureUniqueSlug(String base) {
-        if (!postRepository.existsBySlug(base)) return base;
-        int suffix = 1;
-        String candidate;
-        do { candidate = base + "-" + suffix++; }
-        while (postRepository.existsBySlug(candidate));
-        return candidate;
+    private String ensureUniqueSlug(String base, Long currentPostId) {
+        String stem = base.isBlank() ? "post" : base;
+        for (int suffix = 0; ; suffix++) {
+            String tail = suffix == 0 ? "" : "-" + suffix;
+            String candidate = stem.substring(0, Math.min(stem.length(),
+                    Post.MAX_SLUG_LENGTH - tail.length())) + tail;
+            var existing = postRepository.findBySlug(candidate);
+            if (existing.isEmpty() || existing.get().getId().equals(currentPostId)) return candidate;
+        }
     }
 
     private PageResponse<PostSummaryResponse> toPageResponse(Page<Post> page) {

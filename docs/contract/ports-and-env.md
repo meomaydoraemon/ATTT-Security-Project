@@ -2,6 +2,8 @@
 
 Nguồn sự thật cho `docker-compose.yml` ở thư mục gốc.
 
+Sau kiểm toán: chỉ publish `127.0.0.1:${HTTPS_PORT:-443}:8443`; API cố ý lỗi mặc định tắt. `init-env.sh --lab` tạo lab dữ liệu giả với flag true. Gateway healthcheck chỉ đo process/HTTP redirect; preflight mới kiểm tra HTTPS/WAF/backend end-to-end.
+
 ## Service và mạng (đúng 4 container, 2 mạng)
 
 | Service (container_name) | Image | Mạng (IP cố định) | Cổng ra host | Ghi chú |
@@ -31,7 +33,7 @@ Lệnh demo dùng đúng tên service/container: `docker compose stop backend-no
 |---|---|---|
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | `database` / `5432` / `blogdb` | Service thật của compose |
 | `SPRING_PROFILES_ACTIVE` | `integration,sqli-lab` | validate; bật cụm `/vuln` để đối chứng |
-| `SQLI_DEMO_ENABLED` | `true` | Cụm `/api/v1/vuln` hoạt động trên 2 node |
+| `SQLI_DEMO_ENABLED` | `${SQLI_DEMO_ENABLED:-false}` | Chỉ bật tường minh trong lab, cần đồng thời profile sqli-lab |
 | `SQLI_DEMO_DB_URL` | `jdbc:postgresql://database:5432/sqli_lab` | Database riêng, reader chỉ đọc |
 | `SQLI_DEMO_DB_USERNAME` | `sqli_demo_reader` | Tài khoản chỉ SELECT fixture |
 | `TRUSTED_PROXY_REGEX` | `10\.209\.10\.10` | Backend chỉ nhận IP client qua `X-Forwarded-For` khi kết nối đến từ IP của `nginx-waf` |

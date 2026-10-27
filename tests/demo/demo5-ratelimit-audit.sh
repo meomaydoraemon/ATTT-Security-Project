@@ -19,10 +19,15 @@ check "Request đầu tiên vẫn tới backend (401 sai mật khẩu)" 401 "$(e
 title "Bổ sung 2: client tự gửi X-Forwarded-For giả"
 s=$(curl -s --cacert "$CA" -o /dev/null -D "$TMP/head" -w '%{http_code}' -H 'X-Forwarded-For: 6.6.6.6' -H 'X-Real-IP: 6.6.6.6' "$BASE/api/v1/posts")
 RID=$(last_rid); sleep 1
+check "Request kiểm tra IP tới backend" 200 "$s"
+require_backend_received "$RID"
 LINE=$(backend_logs | grep "$RID")
 note "$LINE"
 check "IP giả 6.6.6.6 không xuất hiện trong log backend" 0 "$(echo "$LINE" | grep -c '6\.6\.6\.6')"
-check "Log backend có IP client thật (không phải IP Nginx 10.209.10.10)" 0 "$(echo "$LINE" | grep -c 'ip=10\.209\.10\.10')"
+REAL_IP=$(nginx_log | awk -v rid="rid=$RID " 'index($0, rid) {print $1}')
+[ -n "$REAL_IP" ] || fatal "Thiếu IP peer của cùng request trong log Nginx."
+case "$LINE" in *"ip=$REAL_IP"*) FOUND=1 ;; *) FOUND=0 ;; esac
+check "IP backend khớp IP peer của cùng request tại Nginx" 1 "$FOUND"
 
 title "Bổ sung 3: một request ID xuyên suốt 3 lớp"
 TA=$(login "$USER_A" "$PASS_A") || exit 1
@@ -32,7 +37,7 @@ WAF=$(waf_audit "$RID" | wc -l | tr -d " ")
 note "XSS vào route secure -> HTTP $s, rid $RID: log Nginx $NG dòng, audit WAF $WAF dòng"
 check "Nginx và WAF cùng ghi rid" "1 1" "$NG $WAF"
 s=$(req POST /api/v1/secure/records/search "$TA" '{"keyword":"alpha"}'); RID=$(last_rid); sleep 1
-BE=$(backend_logs | grep -c "$RID")
+BE=$(backend_count "$RID")
 note "Request hợp lệ -> HTTP $s, rid $RID: log backend $BE dòng"
 check "Backend ghi đúng rid do Nginx sinh" 1 "$([ "$BE" -ge 1 ] && echo 1 || echo 0)"
 

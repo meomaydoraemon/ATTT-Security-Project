@@ -3,8 +3,8 @@
 Kiến trúc phòng thủ đa lớp (Defense in Depth) tích hợp WAF trên Load Balancer cho ứng dụng Spring Boot phân lớp.
 
 ```text
-                 Internet / máy kiểm thử
-                          │ chỉ mở HTTPS 443
+                 Máy kiểm thử local
+                          │ HTTPS 127.0.0.1:443
               ┌───────────▼─────────────┐  dmz_net
  Lớp 1        │ nginx-waf               │  SSL Termination, Rate Limiting, Round-Robin + Failover,
  (biên)       │ ModSecurity + OWASP CRS │  JSON Body Inspection, vá ảo, X-Request-ID
@@ -24,6 +24,8 @@ cụm vá `/api/v1/secure` ngay trên 2 node backend. Dữ liệu cho phần SQL
 trong cùng PostgreSQL, truy cập bằng tài khoản chỉ-đọc; PostgreSQL không cho truy vấn chéo database nên
 lỗ hổng cố ý không chạm được bảng của `blogdb`.
 
+**Phạm vi an toàn:** đây là lab dữ liệu giả, không phải cấu hình production. Gateway chỉ bind `127.0.0.1`; backend/DB không publish cổng. `/vuln` mặc định tắt và phải bật tường minh. Riêng `/vuln/posts` dùng cùng bảng `blogdb`, cố ý cho sửa/xóa trái quyền: không dùng database hoặc dữ liệu thật. Hai backend chịu lỗi một node, không phải HA toàn hệ thống.
+
 ## Chạy hệ thống
 
 Yêu cầu: Docker Desktop (Compose v2) và **Git Bash** (cài cùng Git for Windows, có sẵn `openssl` và `sh`).
@@ -34,8 +36,10 @@ repo; không chạy trong PowerShell hay CMD. macOS/Linux dùng terminal bình t
 (chạy lại nhiều lần cũng an toàn, không ghi đè `.env` đã có):
 
 ```bash
-sh scripts/init-env.sh
+sh scripts/init-env.sh --lab
 ```
+
+`--lab` tạo `.env` mới với `SQLI_DEMO_ENABLED=true` để giữ đối chứng SQLi/IDOR. Bỏ `--lab` nếu chỉ cần API secure (mặc định false). `.env` đã tồn tại được giữ nguyên secrets; muốn demo thì tự đặt flag true trong file lab rồi dựng lại backend. Không xóa secrets/volume hiện có để chữa lỗi cấu hình.
 
 **2. Sinh chứng chỉ tự ký** (có SAN cho `localhost` và `127.0.0.1`; khóa không được commit):
 
@@ -49,7 +53,7 @@ sh nginx/certs/generate-cert.sh
 docker compose up -d --build --wait
 ```
 
-Truy cập qua `https://localhost` (chỉ mở cổng 443, không có `http://`).
+Truy cập qua `https://localhost`. Nếu 443 bận, đặt `HTTPS_PORT=19443` trong `.env`, dùng `https://localhost:19443`. Các script tự đọc cổng này hoặc nhận `BASE=https://localhost:19443` tường minh.
 
 **4. Kiểm tra nhanh** toàn hệ thống (Docker, `.env`, chứng chỉ, 4 container, WAF, dữ liệu mẫu), in PASS/WARN/FAIL
 kèm cách sửa:
@@ -64,7 +68,9 @@ sh scripts/preflight.sh
 sh tests/demo/run-all.sh
 ```
 
-**Đưa về trạng thái sạch** (xóa dữ liệu DB và log, dựng lại với dữ liệu mẫu gốc, rồi chạy preflight). Dùng trước
+Runner có regression offline kiểm tra log thiếu/rỗng, RID thiếu và Docker/WAF mode lỗi; thiếu evidence phải FAIL. Regression Java nằm tại `AuditFixRegressionTest.java`.
+
+**Đưa đúng lab về trạng thái sạch** (xóa DB/log của project đó). Chỉ dùng sau khi xác minh project/volume thuộc lab và chấp nhận mất dữ liệu; không dùng để chữa sai URL hoặc dọn project khác. Dùng trước
 buổi trình bày, sau khi sửa file trong `database/init/`, hoặc khi cập nhật từ bản cũ:
 
 ```bash
@@ -92,12 +98,12 @@ Mọi route dùng chung token lấy ở `/api/v1/auth/login`.
 |---|---|---|
 | 1. HA & Failover | `tests/demo/demo1-failover.sh` | `docker compose stop backend-node-1`, token cũ vẫn dùng được, Nginx chuyển sang node 2 |
 | 2. Vá ảo tại WAF | `tests/demo/demo2-waf-virtual-patch.sh` | SQLi vào `/api/v1/vuln/records/search` bị WAF chặn `403`, audit có rule `100100`, backend không nhận request |
-| 3. Defense in Depth | `tests/demo/demo3-defense-in-depth.sh` | WAF chuyển DetectionOnly: bản lỗi lộ 3 dòng, bản vá (Parameterized Query) trả `[]`; UNION sang `blogdb` thất bại |
+| 3. Defense in Depth | `tests/demo/demo3-defense-in-depth.sh` | WAF chuyển DetectionOnly: bản lỗi lộ 3 dòng, bản vá (Parameterized Query) trả `[]`; bảng nghiệp vụ không có trong datasource SQLi; kiểm tra ACL riêng để chứng minh isolation |
 | 4. Chống IDOR | `tests/demo/demo4-idor.sh` | User B thao tác trên nháp của A tại `/api/v1/secure/posts/{id}`: `403` từ backend (không có `X-Blocked-By`), chưa đăng nhập `401`; bản lỗi `/api/v1/vuln/posts/{id}` cho người chưa đăng nhập đọc nháp (lộ email) và cho B sửa bài |
 | Bổ sung | `tests/demo/demo5-ratelimit-audit.sh` | Brute-force đăng nhập bị `429`; IP giả trong `X-Forwarded-For` không vào audit log; 1 request ID xuyên suốt Nginx, WAF, backend; Swagger, actuator và cổng 80 không mở ra ngoài |
 
 Demo 3 đổi chế độ WAF bằng `sh scripts/waf-mode.sh DetectionOnly` và trả lại bằng `sh scripts/waf-mode.sh On`
-(script demo tự làm việc này).
+(script demo tự làm việc này). DetectionOnly là cấu hình thí nghiệm chủ động không chặn để đo lớp sau, không phải kỹ thuật bypass WAF.
 
 Kiểm thử thủ công: Postman trong `tests/postman/` (phủ toàn bộ API), mẫu request Burp trong `tests/burp/`
 (hướng dẫn trong [tests/burp/README.md](tests/burp/README.md)).
@@ -110,7 +116,7 @@ Khi chạy, mọi log ghi ra thư mục `logs/` trên máy (đã có trong `.git
 ```
 logs/
 ├── nginx/access.log              # log truy cập Nginx (có rid, upstream)
-├── waf/modsec_audit.log          # audit log ModSecurity (JSON, không chứa token/mật khẩu)
+├── waf/modsec_audit.log          # audit log ModSecurity (JSON; bỏ header/body, rà soát matched data trước khi chia sẻ)
 ├── backend-node-1/audit.log      # log ứng dụng node 1 (reqId, user, ip)
 └── backend-node-2/audit.log      # log ứng dụng node 2
 ```
