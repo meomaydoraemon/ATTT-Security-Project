@@ -5,6 +5,7 @@
 #   - cụm lỗi /api/v1/vuln (nối chuỗi)             -> payload đổi câu SQL, lộ toàn bộ dữ liệu giả
 #   - cụm vá  /api/v1/secure (Parameterized Query) -> payload chỉ là chuỗi thường, không lộ gì
 # Script tự trả WAF về chế độ On khi kết thúc.
+DEMO_TARGET=lab   # listener lab (https://localhost:9443), log từ lab-backend
 . "$(dirname "$0")/common.sh"
 PAYLOAD="' OR '1'='1"
 

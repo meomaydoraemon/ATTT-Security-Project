@@ -1,8 +1,9 @@
 #!/bin/sh
 # Demo 2 - Vá ảo tại tầng biên (Virtual Patching / Integrity).
-# Endpoint /api/v1/vuln/records/search CÓ LỖI SQLi (nối chuỗi), chạy ngay trên backend chính.
+# Endpoint /api/v1/vuln/records/search CÓ LỖI SQLi (nối chuỗi), chỉ có trên lab-backend (listener lab).
 # Bật WAF: payload bị chặn 403 tại Nginx, request không tới được code Java, dù code chưa được vá.
-# Cần: docker compose up -d, WAF_MODE=On.
+# Cần: docker compose up -d, sh scripts/lab.sh up, WAF_MODE=On.
+DEMO_TARGET=lab   # listener lab (https://localhost:9443), log từ lab-backend
 . "$(dirname "$0")/common.sh"
 PAYLOAD="' OR '1'='1"
 

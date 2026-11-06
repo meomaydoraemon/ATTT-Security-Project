@@ -2,9 +2,11 @@
 # Demo 4 - Phòng thủ logic phân quyền (chống IDOR / Broken Access Control, mô hình AAA).
 # User B dùng ID bài NHÁP của User A (post 3). Request không có ký tự độc hại nên WAF cho qua;
 # tầng Service của Spring Boot đối chiếu JWT với chủ sở hữu và trả 403.
-# Cặp đối chứng: bản vá /api/v1/secure/posts vs bản lỗi /api/v1/vuln/posts (cùng backend chính).
+# Cặp đối chứng: bản vá /api/v1/secure/posts vs bản lỗi /api/v1/vuln/posts (cùng lab-backend, dữ liệu lab).
+DEMO_TARGET=lab   # listener lab (https://localhost:9443), log từ lab-backend
 . "$(dirname "$0")/common.sh"
 POST_A_DRAFT=3
+POST_B_OWN=4     # bài công khai của User B trong 03-seed-data.sql
 
 title "Demo 4: chống IDOR"
 TA=$(login "$USER_A" "$PASS_A") || exit 1
@@ -15,6 +17,10 @@ s=$(req GET /api/v1/secure/posts/$POST_A_DRAFT "$TA")
 check "User A đọc nháp của mình" 200 "$s"
 
 title "Bước 2: User B tấn công bài nháp của A trên bản VÁ /api/v1/secure/posts/$POST_A_DRAFT"
+# Kiểm tra dương: token của B hợp lệ và đọc được tài nguyên của chính B (bài 4),
+# để 403 phía sau chắc chắn là kết quả của ownership check, không phải token hỏng.
+s=$(req GET /api/v1/secure/posts/$POST_B_OWN "$TB")
+check "B đọc bài của chính mình (token B hợp lệ)" 200 "$s"
 s=$(req GET /api/v1/secure/posts/$POST_A_DRAFT "$TB"); note "GET    -> $s  $(body)"
 check "B đọc nháp của A" 403 "$s"
 check "403 này do backend, không phải WAF (không có X-Blocked-By)" "" "$(header X-Blocked-By)"
@@ -37,7 +43,7 @@ backend_logs | grep "$RID" | sed 's/^/  /'
 N=$(backend_logs | grep "$RID" | grep -c 'user=user_b')
 check "Log backend có rid + user_b cho request bị từ chối" 1 "$([ "$N" -ge 1 ] && echo 1 || echo 0)"
 
-title "Đối chứng: bản LỖI /api/v1/vuln/posts (cùng backend, cùng token)"
+title "Đối chứng: bản LỖI /api/v1/vuln/posts (cùng lab-backend, cùng token)"
 s=$(req GET /api/v1/vuln/posts/$POST_A_DRAFT "")
 note "GET không token -> $s  $(body)"
 check "Bản lỗi: ai cũng đọc được nháp, không cần đăng nhập (lỗi gốc)" 200 "$s"
