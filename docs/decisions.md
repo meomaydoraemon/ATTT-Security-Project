@@ -81,3 +81,20 @@ Cụm `/secure/posts` dùng chung tầng Service (có Ownership Check) với rou
 - Chỉ chạy khi volume trống; sửa SQL/SH xong phải `docker compose down -v`.
 - `.gitattributes` ép LF cho `*.sql`, `*.sh`, `*.conf`, `*.yml` (psql/shell đọc sai khi dòng kết thúc bằng CRLF).
 - Backend nghiệp vụ kết nối bằng `app_user`: không superuser, không quyền CREATE trên schema.
+
+## D11. Chế độ Local: tách lab khỏi production (07/11/2026)
+
+**Thay đổi so với D2:** cụm API lỗi `/api/v1/vuln` **không còn chạy trên 2 node backend chính**. D2 cũ chạy `/vuln` song song `/secure` trên cùng node, dùng chung token, JWT secret và CSDL. Giờ hai node prod chỉ có profile `integration`, `SQLI_DEMO_ENABLED: "false"` ghi cứng và tắt springdoc. `/vuln` chỉ có ở `lab-backend`.
+
+- **Lab** (profile `lab`):
+  - `lab-backend` dùng cùng image, profile `integration,sqli-lab`, flag true, JWT secret riêng `LAB_JWT_SECRET`.
+  - `lab-db` là PostgreSQL trên tmpfs, chạy nguyên văn `database/init/01–04`.
+  - Cả hai chỉ nằm trên `lab_net` (10.209.20.0/24, internal). `nginx-waf` là container duy nhất gắn nhiều mạng (10.209.20.10 trên `lab_net`).
+- **Nginx:**
+  - Listener prod `8443`: trả `404` cho `^~ /api/v1/vuln/`, là lớp thứ hai ngoài việc node prod không đăng ký route.
+  - Listener lab `9443` (publish `127.0.0.1:${LAB_HTTPS_PORT:-9443}`): cùng TLS, WAF, header và chính sách 404 actuator/Swagger, thông qua `nginx/includes/listener-common.conf`. Có rate-limit zone riêng `lab_api`, `lab_login`. Upstream `lab_cluster` dùng `resolve`, nên lab tắt thì listener lab trả `503` JSON.
+- **Lý do:** route cố ý lỗi và dữ liệu đối chứng phải tách khỏi môi trường production **trước khi** triển khai phân tán hay đưa lên Internet. Nếu dùng chung JWT secret, token do lab cấp sẽ được prod chấp nhận cho user trùng tên. Nếu dùng chung CSDL, IDOR trên `/vuln/posts` sửa được dữ liệu prod.
+- **Vận hành:** `sh scripts/lab.sh up|down|reset|status`. Demo 1 và 5 chạy trên prod; Demo 2, 3, 4 trên lab; Demo 6 kiểm tra cô lập. Bằng chứng nằm trong `evidence/T-002/`.
+- **Tồn dư chưa xử lý:**
+  - **R-RES-01:** cluster DB prod vẫn có database `sqli_lab`, role `sqli_demo_reader` và cần `SQLI_LAB_READER_PASSWORD`, vì volume prod đã được khởi tạo cùng `04`. Muốn gỡ phải khởi tạo lại DB prod mà không chạy `04`, cần người dùng đồng ý vì có dữ liệu.
+  - **R-RES-02:** `waf-mode.sh` đổi chế độ WAF cho toàn bộ Nginx, kể cả listener prod (Demo 3). Chỉ chấp nhận ở chế độ Local, không có tunnel.

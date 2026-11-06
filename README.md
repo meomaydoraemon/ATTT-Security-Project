@@ -4,27 +4,50 @@ Kiến trúc phòng thủ đa lớp (Defense in Depth) tích hợp WAF trên Loa
 
 ```text
                  Máy kiểm thử local
-                          │ HTTPS 127.0.0.1:443
+                          │ HTTPS 127.0.0.1:443 (prod)   127.0.0.1:9443 (lab)
               ┌───────────▼─────────────┐  dmz_net
  Lớp 1        │ nginx-waf               │  SSL Termination, Rate Limiting, Round-Robin + Failover,
  (biên)       │ ModSecurity + OWASP CRS │  JSON Body Inspection, vá ảo, X-Request-ID
-              └───────────┬─────────────┘
-                          │ internal_net (10.209.10.0/24, không ra Internet)
-          ┌───────────────┼───────────────┐
-   ┌──────▼──────┐ ┌──────▼──────┐ ┌───────▼────────┐
-   │backend-node-1│ │backend-node-2│ │ database       │ PostgreSQL 16
-   │  /secure (vá)│ │  /secure (vá)│ │ ├ blogdb       │ nghiệp vụ, tài khoản app_user (quyền tối thiểu)
-   │  /vuln (lỗi) │ │  /vuln (lỗi) │ │ └ sqli_lab     │ dữ liệu giả cho SQLi, tài khoản chỉ-đọc
-   └─────────────┘ └─────────────┘ └────────────────┘
-   2 node dùng chung image, JWT secret và CSDL
+              └─────┬─────────────┬─────┘
+   internal_net     │             │  lab_net (10.209.20.0/24, internal, chỉ khi bật profile lab)
+   (10.209.10.0/24) │             └──────────────┬──────────────────────┐
+          ┌─────────┼─────────────┐       ┌──────▼──────┐        ┌──────▼──────┐
+   ┌──────▼──────┐ ┌▼────────────┐ ┌▼──────────────┐ │ lab-backend │        │ lab-db      │
+   │backend-node-1│ │backend-node-2│ │ database      │ │ /secure +   │        │ tmpfs, seed │
+   │  /secure (vá)│ │  /secure (vá)│ │ blogdb        │ │ /vuln (lỗi) │        │ blogdb +    │
+   └─────────────┘ └─────────────┘ └───────────────┘ └─────────────┘        │ sqli_lab    │
+   2 node prod dùng chung image, JWT secret và CSDL    secret và dữ liệu riêng  └─────────────┘
 ```
 
-Đúng **4 container** và **2 phân vùng mạng** như đề cương. Cụm API lỗi `/api/v1/vuln` chạy song song với
-cụm vá `/api/v1/secure` ngay trên 2 node backend. Dữ liệu cho phần SQLi nằm ở database `sqli_lab` riêng
-trong cùng PostgreSQL, truy cập bằng tài khoản chỉ-đọc; PostgreSQL không cho truy vấn chéo database nên
-lỗ hổng cố ý không chạm được bảng của `blogdb`.
+Phần prod gồm **4 container** và **2 phân vùng mạng** như đề cương; hai node chỉ chạy cụm vá `/api/v1/secure`
+và các API nghiệp vụ. Cụm API cố ý lỗi `/api/v1/vuln` (SQLi, IDOR) chỉ chạy trong **lab tách biệt** (xem
+[Chế độ Local](#chế-độ-local-production-và-lab-tách-biệt)): container, database, mạng và JWT secret riêng, đi qua
+cùng WAF ở listener `https://localhost:9443`.
 
-**Phạm vi an toàn:** đây là lab dữ liệu giả, không phải cấu hình production. Gateway chỉ bind `127.0.0.1`; backend/DB không publish cổng. `/vuln` mặc định tắt và phải bật tường minh. Riêng `/vuln/posts` dùng cùng bảng `blogdb`, cố ý cho sửa/xóa trái quyền: không dùng database hoặc dữ liệu thật. Hai backend chịu lỗi một node, không phải HA toàn hệ thống.
+**Phạm vi an toàn:** đây là môi trường dữ liệu giả, không phải cấu hình production. Mọi cổng chỉ bind `127.0.0.1`; backend/DB không publish cổng. Listener prod trả `404` cho `/api/v1/vuln/` và node prod không đăng ký route này. Hai backend chịu lỗi một node, không phải HA toàn hệ thống.
+
+## Chế độ Local: production và lab tách biệt
+
+| | Prod | Lab (profile `lab`) |
+|---|---|---|
+| Listener | `https://localhost` (cổng `HTTPS_PORT`, mặc định 443) | `https://localhost:9443` (`LAB_HTTPS_PORT`) |
+| Container | `nginx-waf`, `backend-node-1`, `backend-node-2`, `database` | `lab-backend`, `lab-db` (dùng chung `nginx-waf`) |
+| Mạng | `internal_net` 10.209.10.0/24 | `lab_net` 10.209.20.0/24 (không thấy DB prod) |
+| API | `/api/v1/secure`, API nghiệp vụ; `/api/v1/vuln` → `404` | như prod **và** `/api/v1/vuln` (cố ý lỗi) |
+| Dữ liệu | volume `postgres_data` (lâu dài) | tmpfs: mỗi lần reset nạp lại seed gốc |
+| JWT secret | `JWT_SECRET` | `LAB_JWT_SECRET` (khác prod, nên token lab bị prod từ chối) |
+| Demo | 1 (failover), 5 (rate limit, audit) | 2, 3, 4; Demo 6 kiểm tra cô lập giữa hai bên |
+
+```bash
+sh scripts/lab.sh up       # bật lab (chỉ lab-db, lab-backend), chờ healthy
+sh scripts/lab.sh status   # trạng thái lab, listener lab và container prod
+sh scripts/lab.sh reset    # đưa dữ liệu lab về seed gốc (vd. sau Demo 4), khoảng 25 giây
+sh scripts/lab.sh down     # tắt và xóa 2 container lab; prod vẫn chạy
+```
+
+Tài khoản lab giống bảng [Tài khoản thử nghiệm](#tài-khoản-thử-nghiệm), nhưng nằm trong `lab-db` riêng. Lab tắt thì listener 9443 trả `503` JSON, prod vẫn chạy bình thường.
+Không dùng `docker compose --profile lab down`: lệnh đó dừng cả prod. `lab.sh` kiểm tra lại sau mỗi lệnh rằng container prod không bị đổi.
+Demo 3 đổi chế độ WAF cho toàn bộ Nginx (cả listener prod) rồi trả về `On`. Điều này chỉ chấp nhận được ở chế độ Local, khi không có tunnel hay truy cập từ ngoài.
 
 ## Chạy hệ thống
 
@@ -36,10 +59,10 @@ repo; không chạy trong PowerShell hay CMD. macOS/Linux dùng terminal bình t
 (chạy lại nhiều lần cũng an toàn, không ghi đè `.env` đã có):
 
 ```bash
-sh scripts/init-env.sh --lab
+sh scripts/init-env.sh
 ```
 
-`--lab` tạo `.env` mới với `SQLI_DEMO_ENABLED=true` để giữ đối chứng SQLi/IDOR. Bỏ `--lab` nếu chỉ cần API secure (mặc định false). `.env` đã tồn tại được giữ nguyên secrets; muốn demo thì tự đặt flag true trong file lab rồi dựng lại backend. Không xóa secrets/volume hiện có để chữa lỗi cấu hình.
+`.env` đã tồn tại được giữ nguyên giá trị; script chỉ bổ sung khóa còn thiếu, vd. các secret riêng của lab (`LAB_*`). Cờ `--lab` cũ đã ngừng dùng. Không xóa secrets/volume hiện có để chữa lỗi cấu hình.
 
 **2. Sinh chứng chỉ tự ký** (có SAN cho `localhost` và `127.0.0.1`; khóa không được commit):
 
@@ -62,16 +85,16 @@ kèm cách sửa:
 sh scripts/preflight.sh
 ```
 
-**5. Chạy toàn bộ demo** (các kiểm tra tự động, in kết quả PASS/FAIL):
+**5. Bật lab và chạy toàn bộ demo** (các kiểm tra tự động, in kết quả PASS/FAIL; runner báo FAIL nếu lab chưa chạy):
 
 ```bash
+sh scripts/lab.sh up
 sh tests/demo/run-all.sh
 ```
 
 Runner có regression offline kiểm tra log thiếu/rỗng, RID thiếu và Docker/WAF mode lỗi; thiếu evidence phải FAIL. Regression Java nằm tại `AuditFixRegressionTest.java`.
 
-**Đưa đúng lab về trạng thái sạch** (xóa DB/log của project đó). Chỉ dùng sau khi xác minh project/volume thuộc lab và chấp nhận mất dữ liệu; không dùng để chữa sai URL hoặc dọn project khác. Dùng trước
-buổi trình bày, sau khi sửa file trong `database/init/`, hoặc khi cập nhật từ bản cũ:
+**Đưa dữ liệu demo về ban đầu:** dùng `sh scripts/lab.sh reset` (chỉ lab, không đụng prod). Lệnh dưới đây **xóa volume DB prod và log**; chỉ dùng khi đã xác minh đúng project, chấp nhận mất dữ liệu prod, và sau khi sửa file trong `database/init/`:
 
 ```bash
 sh scripts/reset-demo.sh --yes
@@ -90,9 +113,11 @@ Nạp từ `database/init/03-seed-data.sql`. Chỉ dùng trên máy lab.
 | `user_a` | `UserA@Nhom9-2026` | USER | bài 2 (công khai), **bài 3 (NHÁP)**, Record 1–2 |
 | `user_b` | `UserB@Nhom9-2026` | USER | bài 4, Record 3–4 |
 
-Mọi route dùng chung token lấy ở `/api/v1/auth/login`.
+Các tài khoản này có ở cả DB prod và `lab-db`. Token lấy ở `/api/v1/auth/login` của listener nào chỉ dùng được trên listener đó.
 
-## Bốn demo
+## Các demo
+
+Demo 1 và 5 chạy trên listener prod. Demo 2, 3, 4 chạy trên listener lab (`https://localhost:9443`) và đọc log `logs/lab-backend/audit.log`.
 
 | Demo | Script | Nội dung kiểm chứng |
 |---|---|---|
@@ -101,6 +126,7 @@ Mọi route dùng chung token lấy ở `/api/v1/auth/login`.
 | 3. Defense in Depth | `tests/demo/demo3-defense-in-depth.sh` | WAF chuyển DetectionOnly: bản lỗi lộ 3 dòng, bản vá (Parameterized Query) trả `[]`; bảng nghiệp vụ không có trong datasource SQLi; kiểm tra ACL riêng để chứng minh isolation |
 | 4. Chống IDOR | `tests/demo/demo4-idor.sh` | User B thao tác trên nháp của A tại `/api/v1/secure/posts/{id}`: `403` từ backend (không có `X-Blocked-By`), chưa đăng nhập `401`; bản lỗi `/api/v1/vuln/posts/{id}` cho người chưa đăng nhập đọc nháp (lộ email) và cho B sửa bài |
 | Bổ sung | `tests/demo/demo5-ratelimit-audit.sh` | Brute-force đăng nhập bị `429`; IP giả trong `X-Forwarded-For` không vào audit log; 1 request ID xuyên suốt Nginx, WAF, backend; Swagger, actuator và cổng 80 không mở ra ngoài |
+| 6. Cô lập lab | `tests/demo/demo6-isolation.sh` | Token lab bị prod từ chối (`401`) và ngược lại; 4 route `/vuln` trả `404` trên prod, cả qua gateway lẫn khi gọi thẳng node; lab-backend không phân giải và không kết nối được DB prod; chỉ nginx-waf gắn nhiều mạng; secret khác nhau; mật khẩu/token không vào log; checksum dữ liệu prod không đổi |
 
 Demo 3 đổi chế độ WAF bằng `sh scripts/waf-mode.sh DetectionOnly` và trả lại bằng `sh scripts/waf-mode.sh On`
 (script demo tự làm việc này). DetectionOnly là cấu hình thí nghiệm chủ động không chặn để đo lớp sau, không phải kỹ thuật bypass WAF.
