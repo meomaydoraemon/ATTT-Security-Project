@@ -83,3 +83,15 @@ Bắt đầu: 2026-11-07. Không chứa secret.
 - **D8 (xong):** mọi cổng PASS (xem `T-002/REPORT.md`). `run-all` chạy 2 lần, mỗi lần 111/0. Chế độ không bật lab: Demo 1 và 5 PASS, listener lab trả 503 JSON. Reset 20–29 giây. `mvn` 170/0/5. Scan 0.
 - **Trạng thái cuối:** 6 container healthy; dữ liệu lab đã reset về seed; WAF On; preflight 25/0/0 kèm 1 INFO.
 - **Ghi nhận:** bài 3 của DB prod đã bị Demo 4 của T-001 sửa (khi baseline còn để /vuln trên prod). Không tự khôi phục.
+
+## T-003 (bắt đầu 2026-11-07, nhánh `work/t003-local-ready`, tag `checkpoint/t003-start` = `8f55b6d`)
+- Trạng thái đầu: working tree sạch, 6 container healthy, RAM trống 1.63 GB, nginx-waf 77.8 MiB.
+- **2.1 (xong, đã commit `a213509` `4d7aaf5` `e8c618f`):**
+  - Bỏ mount WAF_MODE toàn cục. Lab có override trên tmpfs `/etc/nginx/waf-lab/`, nạp TRƯỚC rules file; `waf-mode.sh lab On|DetectionOnly` dùng `nginx -t` + reload.
+  - Lần đầu đặt override SAU rules file thì không có tác dụng; proof bắt được (FAIL 4). Đã sửa thứ tự.
+  - Proof `tests/demo/waf-listener-proof.sh`: 30/0, prod không gián đoạn (46 request lành tính đều 200).
+  - Demo 3: 12/0, có assertion prod vẫn chặn.
+  - Ngắt bằng TERM: lab tự về On. Kill -9: preflight FAIL, run-all FAIL, in lệnh khôi phục `sh scripts/waf-mode.sh lab On`.
+  - Preflight 26/0/0. Guard 10/10 trên bash và dash (đã sửa F10). RAM nginx 74.7 → 87.6 MiB.
+- **Còn lại:** 2.2 (demo6 tcp/resolves/network, scanner, hồi quy), 2.3 SqliLabPostgresTest, 2.4 demo-checklist, 2.5 script R-RES-01 dry-run, docs R-RES-02, nghiệm thu, báo cáo.
+- WAF hiện ở trạng thái an toàn: prod On, lab On.
