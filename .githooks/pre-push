@@ -1,0 +1,20 @@
+#!/bin/sh
+# Chỉ cho push tới repository cá nhân ATTT-Security-Project; chặn mọi đích khác.
+# Repository nhóm (Lemonimjuice/CSATTT-BTL--Nhom9) chỉ để tham khảo: không bao giờ push.
+# Bật sau mỗi lần clone: git config core.hooksPath .githooks
+# Git truyền: $1 = tên remote, $2 = URL đích thực tế.
+url=$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')
+case "$url" in
+    *lemonimjuice/csattt-btl--nhom9*)
+        echo "pre-push: CHẶN — không được push lên repository nhóm ($2)." >&2
+        exit 1 ;;
+    https://github.com/meomaydoraemon/attt-security-project.git|\
+    https://github.com/meomaydoraemon/attt-security-project|\
+    git@github.com:meomaydoraemon/attt-security-project.git|\
+    ssh://git@github.com/meomaydoraemon/attt-security-project.git)
+        exit 0 ;;
+    *)
+        echo "pre-push: CHẶN — đích không phải repository cá nhân ATTT-Security-Project ($1 $2)." >&2
+        echo "Muốn thêm đích push mới phải được chủ repo cho phép và sửa hook này trong một commit riêng." >&2
+        exit 1 ;;
+esac

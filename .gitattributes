@@ -5,5 +5,7 @@
 *.conf text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
+# Git hook chạy bằng sh (không có đuôi .sh): giữ LF trên mọi hệ điều hành.
+.githooks/* text eol=lf
 # Request thô cho Burp giữ nguyên CRLF như giao thức HTTP
 *.http -text
