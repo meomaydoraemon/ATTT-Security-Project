@@ -75,9 +75,12 @@ services:
       - ./nginx/includes:/etc/nginx/includes:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/modsecurity:/etc/nginx/modsecurity:ro
-      - ./nginx/modsecurity/mode/${WAF_MODE:-On}.conf:/etc/nginx/modsecurity-mode.conf:ro
       - ./logs/nginx:/var/log/nginx                      # access log Nginx
       - ./logs/waf:/var/log/modsecurity/audit            # modsec_audit.log
+    # Chế độ WAF riêng của listener lab (Demo 3): file override nằm trên tmpfs trong container,
+    # nên thiếu file hoặc container khởi động lại thì lab về On. Prod không đọc thư mục này.
+    tmpfs:
+      - /etc/nginx/waf-lab:mode=1777,size=16k
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:
