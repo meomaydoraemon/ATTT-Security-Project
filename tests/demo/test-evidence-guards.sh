@@ -28,14 +28,22 @@ expect_failure sh -c '. "$1"; backend_count ""' sh "$common"
 expect_failure sh -c '. "$1"; require_backend_received "$2"' sh "$common" "$RID"
 printf '[reqId=%s] received\n' "$RID" >> "$suite/logs/backend-node-1/audit.log"
 sh -c '. "$1"; require_backend_received "$2"' sh "$common" "$RID"
-# Unknown Docker/absent mode is an error; explicit On/DetectionOnly are reported.
-printf '#!/bin/sh\nexit 1\n' > "$suite/bin/docker"
-chmod +x "$suite/bin/docker"
+# Unknown Docker/absent mode is an error; explicit On/DetectionOnly are reported per listener.
+# stub_docker EXIT [OUTPUT]: docker giả in OUTPUT rồi thoát EXIT. Không dùng printf với \" (dash không hỗ trợ).
+stub_docker() {
+    printf '%s
+' "${2:-}" > "$suite/bin/docker.out"
+    { echo '#!/bin/sh'; echo 'cat "$(dirname "$0")/docker.out"'; echo "exit $1"; } > "$suite/bin/docker"
+    chmod +x "$suite/bin/docker"
+}
+stub_docker 1
 expect_failure env PATH="$suite/bin:$PATH" sh "$repo/scripts/waf-mode.sh"
-printf '#!/bin/sh\nprintf \"missing engine directive\\n\"\n' > "$suite/bin/docker"
+stub_docker 0 "missing engine directive"
 expect_failure env PATH="$suite/bin:$PATH" sh "$repo/scripts/waf-mode.sh"
-printf '#!/bin/sh\nprintf \"SecRuleEngine On\\n\"\n' > "$suite/bin/docker"
-env PATH="$suite/bin:$PATH" sh "$repo/scripts/waf-mode.sh" | grep -q 'chế độ: On'
-printf '#!/bin/sh\nprintf \"SecRuleEngine On\\nSecRuleEngine DetectionOnly\\n\"\n' > "$suite/bin/docker"
-env PATH="$suite/bin:$PATH" sh "$repo/scripts/waf-mode.sh" | grep -q 'chế độ: DetectionOnly'
+stub_docker 0 "SecRuleEngine On"
+env PATH="$suite/bin:$PATH" sh "$repo/scripts/waf-mode.sh" | grep -q 'WAF lab: On'
+stub_docker 0 "SecRuleEngine On
+#--LAB--
+modsecurity_rules 'SecRuleEngine DetectionOnly';"
+env PATH="$suite/bin:$PATH" sh "$repo/scripts/waf-mode.sh" | grep -q 'WAF lab: DetectionOnly'
 echo "PASS: 10 evidence/mode guard cases; missing evidence fails closed."
