@@ -1,0 +1,74 @@
+# Nhật ký phiên: xác minh baseline và tách lab (T-001 / T-002)
+
+Bắt đầu: 2026-11-07. Không chứa secret.
+
+## Giai đoạn A: xác định workspace (xong)
+
+- **Repo Git trong workspace** (độ sâu ≤ 2):
+  - `ATTT-Security-Project`: `origin` = `meomaydoraemon/ATTT-Security-Project`, là **repo riêng của người dùng**. `team-readonly` = repo nhóm, chỉ fetch; push URL đã bị vô hiệu (`no-push://`). Nhánh `main`, HEAD `281e748` (2026-11-07, "chore: allow pushes only to the personal repository"). `develop` = `main` = `origin/main` = `281e748`. Tag `baseline/2981c24-audited`. Không có stash; working tree sạch.
+  - `audit-main-2`: `origin` = **repo nhóm** (fetch); push URL đã bị vô hiệu. Nhánh `codex/main-2-audit`, HEAD `2981c24`; `main-2` ở `0a22829`. Working tree sạch.
+  - `private-repo-staging`: không có Git, chỉ để tham khảo.
+- **Fetch chỉ đọc (2026-11-07):** `team-readonly/main` = `team-readonly/main-2` = `0a22829`. Nhánh `main-2` của nhóm **không có commit nào mới hơn `0a22829`**. `origin/main` và `origin/develop` = `281e748`.
+- **Lựa chọn (A3):** dùng `ATTT-Security-Project`.
+  - Repo này chứa `docker-compose.yml`, `backend/`, `nginx/`.
+  - HEAD `281e748` kế thừa trực tiếp `2981c24`. Phần khác so với `2981c24` chỉ gồm 20 file tài liệu, hook và quy tắc AI (`git diff --stat 2981c24 HEAD`: 20 files, +1198), không đổi source.
+  - Đây là repo người dùng vừa push lên GitHub, và theo quy tắc của repo (AGENTS.md) là nơi phát triển duy nhất.
+  - Không có mâu thuẫn, nên không cần hỏi.
+- **A4:** `git diff --stat` rỗng; `git diff --ignore-cr-at-eol --stat` rỗng; không có file untracked. Có 4 file tài liệu audit ở trạng thái `w/mixed` EOL: nội dung không đổi, đó là định dạng gốc của báo cáo Codex.
+- **A5:** tạo nhánh `work/local-lab-split` từ `281e748`. Không cần commit snapshot. Hook `pre-push` đã có sẵn: `core.hooksPath=.githooks`, chỉ cho push tới repo riêng, chặn repo nhóm. Không đổi git config toàn cục trong phiên này.
+- **A6:** tag cục bộ `checkpoint/session-start` → `281e748`.
+
+## Giai đoạn B: T-001 (đang làm)
+
+### B1 Môi trường
+- Windows 10.0.26300.9818; Docker client/server 29.9.2; Compose v5.6.1.
+- Git Bash: bash 5.3.9 (`sh` = bash); có `/usr/bin/dash`. OpenSSL 3.5.6; curl 8.19.0.
+- **Không có** Java hoặc Maven trên máy; có sẵn image `maven:3.9.6-eclipse-temurin-21`. Không có `pwsh` 7.
+- RAM: tổng 14.8 GB, **trống 2.7 GB** (rủi ro khi chạy 6 container cùng Maven). Đĩa trống: C 29.2 GB, D 79.5 GB.
+
+### B2 Cô lập Docker: **CÓ XUNG ĐỘT, DỪNG VÀ HỎI**
+- Repo chưa có `.env`; chưa có `logs/`; chưa có khóa hay chứng chỉ.
+- Không có container nào trùng tên `nginx-waf`, `backend-node-1`, `backend-node-2`, `database`, `lab-backend`, `lab-db`.
+- Cổng 443 và 9443: không có tiến trình nào nghe.
+- Subnet 10.209.20.0/24: trống.
+- **Xung đột:** network `audit-m2-0a2282_internal_net` (project Compose `audit-m2-0a2282`, lab kiểm toán cũ của Codex) đang chiếm **10.209.10.0/24**. Network này đã `internal`, có 0 endpoint; 4 container của project đó đã dừng 10 ngày (`audit-m2-0a2282-{nginx,node1,node2,db}`), volume `audit-m2-0a2282_postgres_data` vẫn còn. Không xử lý thì Compose sẽ báo `Pool overlaps` khi tạo `internal_net`.
+- **Ghi nhận thêm:**
+  - Tag image `nhom9/blog-api:local` đã tồn tại (tạo 2026-10-28, không có container nào dùng), có thể thuộc project `csattt-btl--nhom9-main-2` (còn volume và `dmz_net`). Lệnh build của phiên sẽ gắn lại tag này; image cũ thành dangling chứ không bị xóa.
+  - Image NGINX đã có sẵn, digest `sha256:873ce68a…3365`, khớp D3.
+- **Quyết định của người dùng:** "Gỡ network project cũ". Đã chạy `docker compose -p audit-m2-0a2282 down` (không `-v`): xóa 4 container đã dừng và 2 network; volume `audit-m2-0a2282_postgres_data` **vẫn còn**. Sau đó 10.209.10.0/24 và 10.209.20.0/24 đều trống.
+- **Cấu hình đã resolve** (chỉ trích các trường cần, không lưu toàn bộ output):
+  - Project `nhom9-local`.
+  - Container `nginx-waf`, `backend-node-1`, `backend-node-2`, `database`.
+  - Cổng duy nhất: `127.0.0.1:443→8443`.
+  - Mạng `nhom9-local_dmz_net`, `nhom9-local_internal_net` (internal, 10.209.10.0/24, nginx 10.209.10.10).
+  - Volume `nhom9-local_postgres_data` (mới, rỗng).
+  - **B2 = PASS** sau khi người dùng cho phép xử lý xung đột.
+
+### B3 Env và chứng chỉ: PASS
+- Đã chạy `sh scripts/init-env.sh --lab`: `.env` mới, secret ngẫu nhiên, `SQLI_DEMO_ENABLED=true`. Thêm `COMPOSE_PROJECT_NAME=nhom9-local`.
+- Đã chạy `generate-cert.sh`: SAN `localhost`/`127.0.0.1`, hết hạn 2027-11-06.
+- `git check-ignore`: `.env` (.gitignore:21) và `server.key` (.gitignore:25) đều bị ignore.
+
+### B4 Script: PASS (trong Git Bash)
+- `sh` = bash 5.3.9. `sh -n` cho 16 script: 0 lỗi.
+- Guard test chạy bằng `sh` (bash): 10/10 PASS, exit 0.
+- Chạy bằng `dash`: exit 1 ("Không xác định được SecRuleEngine"). Khớp lỗi khả chuyển F10; sẽ sửa tùy chọn ở Giai đoạn C.
+- Bằng chứng: `raw/B4-*.txt`.
+
+### B5 Maven: PASS
+- Chạy `mvn -B -ntp test` trong container `maven:3.9.6-eclipse-temurin-21` (`--memory 2g`), trên bản sao source; cache ở volume `nhom9-local-m2`.
+- Kết quả: **170 run, 0 fail, 0 error, 5 skip** (cả 5 thuộc `SqliLabPostgresTest`, ghi **UNVERIFIED**). BUILD SUCCESS. Bằng chứng: `raw/B5-mvn-test.txt`.
+
+### Commit
+- `77c968c` chore(evidence): ignore `evidence/**/raw/` và `evidence/**/rollback/`.
+
+### B6: đang chạy `docker compose up -d --build --wait`
+- B6 PASS: 4 container healthy, digest nginx khớp D3.
+- B7 PASS: preflight 19/0/0.
+- B8 PASS: 56 assertion, "TẤT CẢ DEMO ĐẠT", WAF On.
+- B9: đã ghi module nginx và RAM.
+- B11 PASS: scan 0 kết quả, đối chứng dương 4/4.
+- B12 PASS: đã lưu 3 image ra `evidence/T-001/rollback/`.
+- **Kết luận A ĐẠT, Kết luận B ĐẠT** (xem `T-001/REPORT.md`). Bỏ qua Giai đoạn C; F10 ghi nhận.
+
+## Giai đoạn D: T-002 (bước tiếp theo)
