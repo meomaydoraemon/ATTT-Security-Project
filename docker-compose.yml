@@ -1,27 +1,45 @@
-# Hệ thống phòng thủ đa lớp của nhóm 9: 4 container, 2 phân vùng mạng.
+# Hệ thống phòng thủ đa lớp của nhóm 9 ở chế độ Local: production và lab tách biệt.
 # Biến môi trường đọc từ .env (tạo bằng scripts/init-env.sh). Chi tiết: docs/contract/ports-and-env.md
 #
-#   docker compose up -d --build --wait     # dựng toàn bộ hệ thống
+#   docker compose up -d --build --wait     # dựng phần prod (4 container)
+#   sh scripts/lab.sh up                     # bật thêm lab (lab-db, lab-backend; profile lab)
 #   docker compose stop backend-node-1       # Demo 1: đánh sập 1 node
 #
-# Lưu ý: PostgreSQL chỉ chạy database/init/*.sql khi volume postgres_data còn trống.
-# Sửa SQL xong phải chạy `docker compose down -v` rồi `up` lại (mất dữ liệu cũ).
+# Lưu ý: PostgreSQL prod chỉ chạy database/init/* khi volume postgres_data còn trống.
+# lab-db chạy trên tmpfs: mỗi lần tạo lại container là nạp lại seed (sh scripts/lab.sh reset).
 
 networks:
   dmz_net:
     driver: bridge            # vùng biên hướng ra Internet
   internal_net:
     driver: bridge
-    internal: true            # vùng lõi: không có đường ra Internet, không publish cổng
+    internal: true            # vùng lõi prod: không có đường ra Internet, không publish cổng
     ipam:
       config:
         - subnet: 10.209.10.0/24   # cố định để backend chỉ tin X-Forwarded-For từ IP của Nginx
+  lab_net:
+    driver: bridge
+    internal: true            # vùng lab: chỉ Nginx, lab-backend, lab-db; không thấy được DB prod
+    ipam:
+      config:
+        - subnet: 10.209.20.0/24
 
-# Cấu hình chung cho 2 node: cùng image, cùng DB, cùng JWT secret (để Demo 1 không phải đăng nhập lại).
-# Hai node cùng bật cụm /api/v1/vuln (bản lỗi) song song với /api/v1/secure (bản vá).
-x-backend: &backend
+# Phần chung của mọi backend: cùng image, healthcheck, giới hạn bộ nhớ.
+x-backend-base: &backend-base
   build: ./backend
   image: nhom9/blog-api:local
+  mem_limit: 768m
+  healthcheck:
+    test: [CMD-SHELL, "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 60s
+  restart: unless-stopped   # `docker compose stop` (Demo 1) vẫn giữ node ở trạng thái tắt
+
+# 2 node prod: cùng DB, cùng JWT secret (để Demo 1 không phải đăng nhập lại). Không có API cố ý lỗi.
+x-backend-prod: &backend-prod
+  <<: *backend-base
   environment:
     DB_HOST: database
     DB_PORT: "5432"
@@ -29,26 +47,16 @@ x-backend: &backend
     DB_USERNAME: ${APP_DB_USERNAME:-app_user}      # tài khoản quyền tối thiểu, KHÔNG phải postgres_admin
     DB_PASSWORD: ${APP_DB_PASSWORD:?Đặt APP_DB_PASSWORD trong .env}
     JWT_SECRET: ${JWT_SECRET:?Đặt JWT_SECRET (Base64 >= 32 byte) trong .env}
-    SPRING_PROFILES_ACTIVE: integration,sqli-lab
-    SQLI_DEMO_ENABLED: ${SQLI_DEMO_ENABLED:-false} # chỉ bật tường minh với init-env.sh --lab
-    # Dữ liệu SQLi nằm ở database "sqli_lab" KHÁC trong cùng PostgreSQL, tài khoản chỉ đọc.
-    # PostgreSQL không cho truy vấn chéo database, nên SQLi ở đây không chạm được bảng của blogdb.
-    SQLI_DEMO_DB_URL: jdbc:postgresql://database:5432/sqli_lab
-    SQLI_DEMO_DB_USERNAME: sqli_demo_reader
-    SQLI_DEMO_DB_PASSWORD: ${SQLI_LAB_READER_PASSWORD:?Đặt SQLI_LAB_READER_PASSWORD trong .env}
+    SPRING_PROFILES_ACTIVE: integration
+    SQLI_DEMO_ENABLED: "false"                    # ghi cứng: prod không bao giờ bật /api/v1/vuln
+    SPRINGDOC_API_DOCS_ENABLED: "false"           # không phục vụ tài liệu API kể cả khi gọi thẳng node
+    SPRINGDOC_SWAGGER_UI_ENABLED: "false"
     TRUSTED_PROXY_REGEX: '10\.209\.10\.10'        # chỉ IP của nginx-waf được báo IP client
   depends_on:
     database:
       condition: service_healthy
-  healthcheck:
-    test: [CMD-SHELL, "curl -fsS http://localhost:8080/actuator/health || exit 1"]
-    interval: 10s
-    timeout: 5s
-    retries: 10
-    start_period: 60s
   networks:
     - internal_net
-  restart: unless-stopped   # `docker compose stop` (Demo 1) vẫn giữ node ở trạng thái tắt
 
 services:
   nginx-waf:
@@ -59,10 +67,12 @@ services:
     entrypoint: [nginx, -g, "daemon off;"]   # bỏ entrypoint sinh cấu hình từ biến môi trường của image
     command: []
     ports:
-      # Chỉ loopback, không LAN/Internet. Nginx không đặc quyền nghe 8443 trong container.
-      - "127.0.0.1:${HTTPS_PORT:-443}:8443"
+      # Chỉ loopback, không LAN/Internet. Nginx không đặc quyền nghe 8443/9443 trong container.
+      - "127.0.0.1:${HTTPS_PORT:-443}:8443"          # listener prod
+      - "127.0.0.1:${LAB_HTTPS_PORT:-9443}:9443"     # listener lab (503 JSON khi lab đang tắt)
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/includes:/etc/nginx/includes:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/modsecurity:/etc/nginx/modsecurity:ro
       - ./nginx/modsecurity/mode/${WAF_MODE:-On}.conf:/etc/nginx/modsecurity-mode.conf:ro
@@ -79,19 +89,21 @@ services:
       dmz_net: {}
       internal_net:
         ipv4_address: 10.209.10.10
+      lab_net:
+        ipv4_address: 10.209.20.10
     depends_on:
       - backend-node-1
       - backend-node-2
     restart: unless-stopped
 
   backend-node-1:
-    <<: *backend
+    <<: *backend-prod
     container_name: backend-node-1
     volumes:
       - ./logs/backend-node-1:/app/logs   # audit log tập trung ra máy host
 
   backend-node-2:
-    <<: *backend
+    <<: *backend-prod
     container_name: backend-node-2
     volumes:
       - ./logs/backend-node-2:/app/logs
@@ -106,7 +118,7 @@ services:
       # 02-least-privilege.sql đọc 2 biến này để tạo tài khoản ứng dụng
       APP_DB_USERNAME: ${APP_DB_USERNAME:-app_user}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Đặt APP_DB_PASSWORD trong .env}
-      # 04-sqli-demo.sh đọc biến này để tạo tài khoản chỉ-đọc cho database sqli_lab
+      # Tồn dư (R-RES-01): 04-sqli-demo.sh vẫn chạy khi khởi tạo volume prod
       SQLI_LAB_READER_PASSWORD: ${SQLI_LAB_READER_PASSWORD:?Đặt SQLI_LAB_READER_PASSWORD trong .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -120,6 +132,56 @@ services:
     networks:
       - internal_net
     restart: unless-stopped
+
+  # ---- Lab (chỉ khi bật profile lab): dữ liệu giả, secret riêng, mạng riêng ----
+  lab-db:
+    container_name: lab-db
+    profiles: [lab]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres_admin
+      POSTGRES_PASSWORD: ${LAB_DB_ADMIN_PASSWORD:?Đặt LAB_DB_ADMIN_PASSWORD trong .env (sh scripts/init-env.sh)}
+      POSTGRES_DB: blogdb
+      APP_DB_USERNAME: app_user
+      APP_DB_PASSWORD: ${LAB_APP_DB_PASSWORD:?Đặt LAB_APP_DB_PASSWORD trong .env (sh scripts/init-env.sh)}
+      SQLI_LAB_READER_PASSWORD: ${LAB_SQLI_READER_PASSWORD:?Đặt LAB_SQLI_READER_PASSWORD trong .env (sh scripts/init-env.sh)}
+    tmpfs:
+      - /var/lib/postgresql/data          # dữ liệu dùng một lần; tạo lại container là về seed gốc
+    volumes:
+      - ./database/init:/docker-entrypoint-initdb.d:ro   # dùng nguyên văn 01-04 như DB prod
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U postgres_admin -d blogdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - lab_net
+    restart: unless-stopped
+
+  lab-backend:
+    <<: *backend-base
+    container_name: lab-backend
+    profiles: [lab]
+    environment:
+      DB_HOST: lab-db
+      DB_PORT: "5432"
+      DB_NAME: blogdb
+      DB_USERNAME: app_user
+      DB_PASSWORD: ${LAB_APP_DB_PASSWORD:?Đặt LAB_APP_DB_PASSWORD trong .env (sh scripts/init-env.sh)}
+      JWT_SECRET: ${LAB_JWT_SECRET:?Đặt LAB_JWT_SECRET trong .env (sh scripts/init-env.sh)}
+      SPRING_PROFILES_ACTIVE: integration,sqli-lab
+      SQLI_DEMO_ENABLED: "true"                   # chỉ lab mới có cụm /api/v1/vuln
+      SQLI_DEMO_DB_URL: jdbc:postgresql://lab-db:5432/sqli_lab
+      SQLI_DEMO_DB_USERNAME: sqli_demo_reader
+      SQLI_DEMO_DB_PASSWORD: ${LAB_SQLI_READER_PASSWORD:?Đặt LAB_SQLI_READER_PASSWORD trong .env (sh scripts/init-env.sh)}
+      TRUSTED_PROXY_REGEX: '10\.209\.20\.10'      # IP của nginx-waf trên lab_net
+    volumes:
+      - ./logs/lab-backend:/app/logs
+    depends_on:
+      lab-db:
+        condition: service_healthy
+    networks:
+      - lab_net
 
 volumes:
   postgres_data:
