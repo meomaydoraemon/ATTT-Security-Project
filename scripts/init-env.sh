@@ -37,7 +37,6 @@ add DB_ADMIN_PASSWORD "$(hex)"
 add APP_DB_USERNAME app_user
 add APP_DB_PASSWORD "$(hex)"
 add JWT_SECRET "$(b64)"
-add WAF_MODE On
 # Tồn dư: database prod vẫn chạy 04-sqli-demo.sh nên vẫn cần biến này (R-RES-01).
 add SQLI_LAB_READER_PASSWORD "$(hex)"
 # Lab tách biệt (profile lab): secret riêng, không dùng chung với prod.
@@ -53,6 +52,9 @@ elif [ -n "$added" ]; then
     echo ".env đã có: giữ nguyên giá trị cũ, bổ sung khóa còn thiếu:$added"
 else
     echo ".env đã có đủ khóa, giữ nguyên."
+fi
+if grep -q '^WAF_MODE=' .env; then
+    echo "Lưu ý: WAF_MODE trong .env đã ngừng dùng: prod luôn On, lab đổi bằng sh scripts/waf-mode.sh lab On|DetectionOnly."
 fi
 if grep -q '^SQLI_DEMO_ENABLED=' .env; then
     echo "Lưu ý: SQLI_DEMO_ENABLED trong .env đã ngừng dùng, không service nào đọc biến này."

@@ -48,11 +48,7 @@ if [ -f .env ]; then
     jb=$(envval JWT_SECRET | tr -d '\r' | openssl base64 -d -A 2>/dev/null | wc -c)
     [ "$jb" -ge 32 ] && pass "JWT_SECRET là Base64 của $jb byte" \
         || fail "JWT_SECRET không phải Base64 >= 32 byte (backend sẽ không khởi động)" "Sinh lại .env bằng scripts/init-env.sh"
-    case "$(envval WAF_MODE | tr -d '\r')" in
-        ""|On) pass "WAF_MODE trong .env là On" ;;
-        DetectionOnly) warn "WAF_MODE trong .env là DetectionOnly (WAF không chặn)" "Sửa .env thành WAF_MODE=On" ;;
-        *) fail "WAF_MODE trong .env không hợp lệ" "Chỉ dùng On hoặc DetectionOnly" ;;
-    esac
+    grep -q '^WAF_MODE=' .env && info "WAF_MODE trong .env đã ngừng dùng: prod luôn On, lab đổi bằng scripts/waf-mode.sh lab"
     grep -q '^SQLI_DEMO_ENABLED=' .env && info "SQLI_DEMO_ENABLED trong .env đã ngừng dùng (không service nào đọc); có thể xóa dòng này"
 else
     fail "Chưa có file .env" "Chạy: sh scripts/init-env.sh"
@@ -75,11 +71,13 @@ if [ -n "$bad" ]; then
     echo; echo "Kết quả: $P PASS, $W WARN, $F FAIL"; exit 1
 fi
 pass "4 container healthy"
-if mode=$(sh scripts/waf-mode.sh); then
+LAB_RESTORE="sh scripts/waf-mode.sh lab On"
+if mode=$(sh scripts/waf-mode.sh 2>/dev/null); then
+    case "$mode" in *"WAF prod: On"*) pass "Cấu hình WAF prod: On" ;; *) fail "Cấu hình WAF prod không phải On" "Kiểm tra nginx/modsecurity/modsecurity.conf" ;; esac
     case "$mode" in
-        *"chế độ: On") pass "WAF đang chạy chế độ On" ;;
-        *"chế độ: DetectionOnly") warn "WAF đang chạy DetectionOnly" "Chạy: sh scripts/waf-mode.sh On" ;;
-        *) fail "Không xác định được WAF mode" "Kiểm tra container và các file SecRuleEngine." ;;
+        *"WAF lab: On"*) pass "Cấu hình WAF lab: On" ;;
+        *"WAF lab: DetectionOnly"*) fail "WAF lab đang DetectionOnly ngoài Demo 3 (thường do Demo 3 bị ngắt cứng)" "Chạy: $LAB_RESTORE" ;;
+        *) fail "Không xác định được WAF lab" "Chạy: $LAB_RESTORE" ;;
     esac
 else
     fail "Không đọc được WAF mode" "Kiểm tra Docker/container; không suy diễn thành On."
@@ -99,6 +97,8 @@ done
 if MSYS_NO_PATHCONV=1 docker exec nginx-waf nginx -t >/dev/null 2>&1; then pass "nginx -t: cấu hình Nginx hợp lệ"; else
     fail "nginx -t báo lỗi cấu hình" "Chạy: docker exec nginx-waf nginx -t để xem chi tiết"; fi
 
+db_prod() { dexec database psql -U postgres_admin -d blogdb -tAc "$1" 2>/dev/null | tr -d '\r'; }
+
 echo "== Lab (profile lab: lab-db, lab-backend)"
 lab_st=""; for c in lab-db lab-backend; do
     lab_st="$lab_st $(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo absent)"; done
@@ -113,6 +113,9 @@ case "$lab_st" in
             "") warn "lab-db không còn bài 3 (đã bị xóa)" "Demo 4 cần bài 3: sh scripts/lab.sh reset" ;;
             *) warn "Bài 3 của lab đã bị sửa (thường do chạy demo IDOR)" "Về dữ liệu gốc: sh scripts/lab.sh reset" ;;
         esac
+        s=$(http --cacert "$CA" -o /dev/null -D "$HDR" -w '%{http_code}' "$LAB_BASE/api/v1/posts/search?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E")
+        [ "$s" = 403 ] && grep -qi '^x-blocked-by: waf' "$HDR" && pass "Runtime: WAF lab chặn request XSS mẫu (403, X-Blocked-By: waf)" \
+            || fail "Runtime: WAF lab không chặn request XSS mẫu (HTTP $s)" "Chạy: $LAB_RESTORE"
         sh_hash() { MSYS_NO_PATHCONV=1 docker exec "$1" sh -c 'test -n "${JWT_SECRET:-}" && printf %s "$JWT_SECRET"' 2>/dev/null | sha256sum | cut -d' ' -f1; }
         hp=$(sh_hash backend-node-1); hl=$(sh_hash lab-backend); empty=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
         if [ "$hp" != "$empty" ] && [ "$hl" != "$empty" ] && [ "$hp" != "$hl" ]; then pass "JWT secret prod và lab khác nhau"; else
@@ -132,13 +135,21 @@ done
 [ "$(echo $nodes | tr ' ' '\n' | sort -u | grep -c .)" -ge 2 ] && pass "Cả 2 node backend đang nhận request" \
     || warn "Chỉ 1 node nhận request" "Có thể một node đang tắt (sau Demo 1): docker compose start backend-node-1"
 s=$(http --cacert "$CA" -o /dev/null -D "$HDR" -w '%{http_code}' "$BASE/api/v1/posts/search?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E")
-[ "$s" = 403 ] && grep -qi '^x-blocked-by: waf' "$HDR" && pass "WAF chặn request XSS mẫu (403, X-Blocked-By: waf)" \
-    || fail "WAF không chặn request XSS mẫu (HTTP $s)" "Kiểm tra chế độ WAF: sh scripts/waf-mode.sh"
+[ "$s" = 403 ] && grep -qi '^x-blocked-by: waf' "$HDR" && pass "Runtime: WAF prod chặn request XSS mẫu (403, X-Blocked-By: waf)" \
+    || fail "Runtime: WAF prod không chặn request XSS mẫu (HTTP $s)" "Xem: sh scripts/waf-mode.sh và docker exec nginx-waf nginx -t"
 s=$(http --cacert "$CA" -o /dev/null -w '%{http_code}' -X POST "$BASE/api/v1/auth/login" -H 'Content-Type: application/json' -d '{"username":"user_a","password":"UserA@Nhom9-2026"}')
 case "$s" in
     200) pass "Đăng nhập user_a thành công" ;;
-    429) warn "Đăng nhập đang bị rate limit (429)" "Chờ khoảng 1 phút rồi thử lại" ;;
-    *) fail "Đăng nhập user_a lỗi (HTTP $s)" "Dữ liệu mẫu có thể chưa nạp: sh scripts/reset-demo.sh --yes" ;;
+    429) warn "Đăng nhập prod đang bị rate limit (429)" "Chờ khoảng 1 phút (5 lần/phút mỗi IP) rồi chạy lại preflight" ;;
+    401)
+        # Chỉ đọc: user seed còn trong DB prod không? Không đề xuất xóa volume.
+        case "$(db_prod "select count(*) from users where username='user_a' and enabled")" in
+            1) fail "Đăng nhập user_a trên prod bị 401: user còn nhưng mật khẩu không khớp seed" "Kiểm tra mật khẩu trong database/init/03-seed-data.sql; không xóa volume DB prod" ;;
+            0) fail "Đăng nhập user_a trên prod bị 401: DB prod không có user seed user_a (hoặc bị khóa)" "Kiểm tra bảng users trong DB prod (chỉ đọc); không xóa volume DB prod" ;;
+            *) fail "Đăng nhập user_a trên prod bị 401, không đọc được DB prod" "Xem: docker compose ps database" ;;
+        esac ;;
+    5*|000) fail "Đăng nhập user_a trên prod lỗi HTTP $s (backend/Nginx không phản hồi)" "Xem: docker compose ps và docker compose logs --tail 50 backend-node-1 backend-node-2 nginx-waf" ;;
+    *) fail "Đăng nhập user_a trên prod lỗi HTTP $s" "Xem: docker compose logs --tail 50 backend-node-1 backend-node-2" ;;
 esac
 
 echo; echo "Kết quả: $P PASS, $W WARN, $F FAIL"
