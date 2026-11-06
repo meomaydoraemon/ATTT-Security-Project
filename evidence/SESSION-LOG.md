@@ -72,3 +72,14 @@ Bắt đầu: 2026-11-07. Không chứa secret.
 - **Kết luận A ĐẠT, Kết luận B ĐẠT** (xem `T-001/REPORT.md`). Bỏ qua Giai đoạn C; F10 ghi nhận.
 
 ## Giai đoạn D: T-002 (bước tiếp theo)
+- **D1 (xong):** `init-env.sh` bổ sung 5 khóa `LAB_*` vào `.env` hiện có; các dòng cũ giữ nguyên (đã đối chiếu hash); không in giá trị. Commit `51ba096`.
+- **D2 (xong):** compose tách prod và lab. Đã áp lên prod bằng `up -d --wait`: node được tạo lại, volume DB giữ nguyên. Bật lab: 6 container healthy. Commit `a4d8ab0`.
+- **D3 (xong):** listener lab 9443; prod chặn `/api/v1/vuln/` trả 404; file include dùng chung; `nginx -t` OK. Commit `435cdae`.
+- **D4 (chưa commit):** `common.sh` có `LAB_BASE`, `DEMO_TARGET`, log theo tham số; Demo 2/3/4 chạy trên lab; Demo 4 có kiểm tra dương với bài 4 của user_b; thêm `demo6-isolation.sh` (chạy lần đầu 54/0) và `prod-checksum.sh`; `run-all.sh` FAIL khi lab tắt.
+- **D5 (chưa commit):** preflight 25 PASS / 0 WARN / 0 FAIL, kèm 1 INFO.
+- **D6 (chưa commit):** đã thử `lab.sh` down/up/reset/status. Reset mất 24 giây và khôi phục bài 3; checksum prod không đổi; ID container prod không đổi.
+- **Tiếp theo:** chạy `run-all` lần 1 (đang chạy), commit test và script, viết tài liệu D7, rồi nghiệm thu D8 (gồm chế độ không bật lab).
+- **D4–D7 (xong):** đã commit `f68954f` (test), `fcecd6f` (scripts), `8acf646` (docs).
+- **D8 (xong):** mọi cổng PASS (xem `T-002/REPORT.md`). `run-all` chạy 2 lần, mỗi lần 111/0. Chế độ không bật lab: Demo 1 và 5 PASS, listener lab trả 503 JSON. Reset 20–29 giây. `mvn` 170/0/5. Scan 0.
+- **Trạng thái cuối:** 6 container healthy; dữ liệu lab đã reset về seed; WAF On; preflight 25/0/0 kèm 1 INFO.
+- **Ghi nhận:** bài 3 của DB prod đã bị Demo 4 của T-001 sửa (khi baseline còn để /vuln trên prod). Không tự khôi phục.
