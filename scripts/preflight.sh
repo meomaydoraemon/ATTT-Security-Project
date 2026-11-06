@@ -16,11 +16,16 @@ P=0; W=0; F=0
 pass() { P=$((P+1)); printf '  [PASS] %s\n' "$1"; }
 warn() { W=$((W+1)); printf '  [WARN] %s\n         -> %s\n' "$1" "$2"; }
 fail() { F=$((F+1)); printf '  [FAIL] %s\n         -> %s\n' "$1" "$2"; }
+info() { printf '  [INFO] %s\n' "$1"; }
 envval() { grep "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-; }
 port=${HTTPS_PORT:-$(envval HTTPS_PORT | tr -d '\r')}
 BASE=${BASE:-https://localhost:${port:-443}}
-printf '%s\n' "$BASE" | grep -Eq '^https://(localhost|127[.]0[.]0[.]1)(:[0-9]{1,5})?$' \
-    || { echo "BASE phải là HTTPS loopback." >&2; exit 2; }
+lab_port=${LAB_HTTPS_PORT:-$(envval LAB_HTTPS_PORT | tr -d '\r')}
+LAB_BASE=${LAB_BASE:-https://localhost:${lab_port:-9443}}
+for b in "$BASE" "$LAB_BASE"; do
+    printf '%s\n' "$b" | grep -Eq '^https://(localhost|127[.]0[.]0[.]1)(:[0-9]{1,5})?$' \
+        || { echo "BASE/LAB_BASE phải là HTTPS loopback." >&2; exit 2; }
+done
 
 echo "== Máy và Docker"
 if docker info >/dev/null 2>&1; then pass "Docker đang chạy"; else
@@ -34,7 +39,8 @@ done
 
 echo "== Cấu hình"
 if [ -f .env ]; then
-    miss=""; for k in DB_ADMIN_PASSWORD APP_DB_USERNAME APP_DB_PASSWORD JWT_SECRET SQLI_LAB_READER_PASSWORD; do
+    miss=""; for k in DB_ADMIN_PASSWORD APP_DB_USERNAME APP_DB_PASSWORD JWT_SECRET SQLI_LAB_READER_PASSWORD \
+                      LAB_JWT_SECRET LAB_DB_ADMIN_PASSWORD LAB_APP_DB_PASSWORD LAB_SQLI_READER_PASSWORD; do
         [ -n "$(envval $k)" ] || miss="$miss $k"; done
     if [ -z "$miss" ]; then pass ".env có đủ biến"; else fail ".env thiếu:$miss" "Bổ sung theo .env.example; giữ secrets tương ứng dữ liệu hiện có, không xóa volume."; fi
     [ "$(envval APP_DB_PASSWORD | tr -d '\r' | wc -c)" -ge 24 ] && pass "APP_DB_PASSWORD đủ 24 ký tự" \
@@ -47,6 +53,7 @@ if [ -f .env ]; then
         DetectionOnly) warn "WAF_MODE trong .env là DetectionOnly (WAF không chặn)" "Sửa .env thành WAF_MODE=On" ;;
         *) fail "WAF_MODE trong .env không hợp lệ" "Chỉ dùng On hoặc DetectionOnly" ;;
     esac
+    grep -q '^SQLI_DEMO_ENABLED=' .env && info "SQLI_DEMO_ENABLED trong .env đã ngừng dùng (không service nào đọc); có thể xóa dòng này"
 else
     fail "Chưa có file .env" "Chạy: sh scripts/init-env.sh"
 fi
@@ -56,7 +63,7 @@ if [ -f "$CA" ] && [ -f nginx/certs/server.key ]; then
 else
     fail "Chưa có chứng chỉ" "Chạy: sh nginx/certs/generate-cert.sh"
 fi
-if [ -d logs/nginx ] && [ -d logs/waf ] && [ -d logs/backend-node-1 ] && [ -d logs/backend-node-2 ]; then pass "Có đủ thư mục logs/"; else
+if [ -d logs/nginx ] && [ -d logs/waf ] && [ -d logs/backend-node-1 ] && [ -d logs/backend-node-2 ] && [ -d logs/lab-backend ]; then pass "Có đủ thư mục logs/"; else
     warn "Thiếu thư mục logs/" "Chạy: sh scripts/init-env.sh (bắt buộc trên Linux)"; fi
 
 echo "== Hệ thống đang chạy"
@@ -77,18 +84,42 @@ if mode=$(sh scripts/waf-mode.sh); then
 else
     fail "Không đọc được WAF mode" "Kiểm tra Docker/container; không suy diễn thành On."
 fi
-if [ "$(dexec backend-node-1 printenv SQLI_DEMO_ENABLED)" = true ]; then
-    pass "API cố ý lỗi đã được bật tường minh cho lab dữ liệu giả"
-else
-    warn "API cố ý lỗi đang tắt" "Chạy demo chỉ sau khi bật SQLI_DEMO_ENABLED=true trong lab được kiểm soát."
-fi
-db() { dexec database psql -U postgres_admin -d blogdb -tAc "$1" 2>/dev/null | tr -d '\r'; }
-[ "$(db "select 1 from pg_database where datname='sqli_lab'")" = 1 ] && pass "Có database sqli_lab cho cụm /vuln" \
-    || fail "Thiếu database sqli_lab (volume DB từ bản cũ)" "Chạy: sh scripts/reset-demo.sh --yes"
-case "$(db "select status || '|' || title from posts where id = 3")" in
-    "DRAFT|Bản nháp bí mật của User A") pass "Dữ liệu mẫu còn nguyên (bài 3 là nháp gốc của User A)" ;;
-    "") warn "Không còn bài 3 (đã bị xóa)" "Demo 4 cần bài 3: chạy sh scripts/reset-demo.sh --yes" ;;
-    *) warn "Bài 3 đã bị sửa (thường do chạy demo IDOR)" "Muốn dữ liệu sạch cho buổi trình bày: sh scripts/reset-demo.sh --yes" ;;
+for n in backend-node-1 backend-node-2; do
+    case "$(dexec $n printenv SQLI_DEMO_ENABLED | tr -d '\r')" in
+        false) pass "$n: API cố ý lỗi tắt (SQLI_DEMO_ENABLED=false)" ;;
+        true) fail "$n: API cố ý lỗi đang BẬT trên node prod" "Node prod phải có SQLI_DEMO_ENABLED=false (docker-compose.yml); dựng lại: docker compose up -d --wait" ;;
+        *) fail "$n: không đọc được SQLI_DEMO_ENABLED" "Kiểm tra container và docker-compose.yml." ;;
+    esac
+    case ",$(dexec $n printenv SPRING_PROFILES_ACTIVE | tr -d '\r')," in
+        *,sqli-lab,*) fail "$n: profile prod có sqli-lab" "Node prod chỉ dùng profile integration" ;;
+        ,,) fail "$n: không đọc được SPRING_PROFILES_ACTIVE" "Kiểm tra container." ;;
+        *) pass "$n: profile không chứa sqli-lab" ;;
+    esac
+done
+if MSYS_NO_PATHCONV=1 docker exec nginx-waf nginx -t >/dev/null 2>&1; then pass "nginx -t: cấu hình Nginx hợp lệ"; else
+    fail "nginx -t báo lỗi cấu hình" "Chạy: docker exec nginx-waf nginx -t để xem chi tiết"; fi
+
+echo "== Lab (profile lab: lab-db, lab-backend)"
+lab_st=""; for c in lab-db lab-backend; do
+    lab_st="$lab_st $(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo absent)"; done
+case "$lab_st" in
+    " healthy healthy")
+        pass "2 container lab healthy"
+        labdb() { MSYS_NO_PATHCONV=1 docker exec lab-db psql -U postgres_admin -d blogdb -tAc "$1" 2>/dev/null | tr -d '\r'; }
+        [ "$(labdb "select 1 from pg_database where datname='sqli_lab'")" = 1 ] && pass "lab-db có database sqli_lab cho cụm /vuln" \
+            || fail "lab-db thiếu database sqli_lab" "Tạo lại lab: sh scripts/lab.sh reset"
+        case "$(labdb "select status || '|' || title from posts where id = 3")" in
+            "DRAFT|Bản nháp bí mật của User A") pass "Dữ liệu lab còn nguyên (bài 3 là nháp gốc của User A)" ;;
+            "") warn "lab-db không còn bài 3 (đã bị xóa)" "Demo 4 cần bài 3: sh scripts/lab.sh reset" ;;
+            *) warn "Bài 3 của lab đã bị sửa (thường do chạy demo IDOR)" "Về dữ liệu gốc: sh scripts/lab.sh reset" ;;
+        esac
+        sh_hash() { MSYS_NO_PATHCONV=1 docker exec "$1" sh -c 'test -n "${JWT_SECRET:-}" && printf %s "$JWT_SECRET"' 2>/dev/null | sha256sum | cut -d' ' -f1; }
+        hp=$(sh_hash backend-node-1); hl=$(sh_hash lab-backend); empty=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        if [ "$hp" != "$empty" ] && [ "$hl" != "$empty" ] && [ "$hp" != "$hl" ]; then pass "JWT secret prod và lab khác nhau"; else
+            fail "JWT secret prod và lab giống nhau hoặc thiếu" "Đặt LAB_JWT_SECRET khác JWT_SECRET trong .env rồi: sh scripts/lab.sh reset"; fi
+        ;;
+    " absent absent") warn "Lab đang tắt (Demo 2, 3, 4, 6 cần lab)" "Bật lab: sh scripts/lab.sh up" ;;
+    *) fail "Lab chưa healthy:$lab_st (lab-db lab-backend)" "Xem: docker compose --profile lab logs lab-db lab-backend; tạo lại: sh scripts/lab.sh reset" ;;
 esac
 
 echo "== Qua Nginx ($BASE)"
