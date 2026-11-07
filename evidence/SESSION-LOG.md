@@ -95,3 +95,10 @@ Bắt đầu: 2026-11-07. Không chứa secret.
   - Preflight 26/0/0. Guard 10/10 trên bash và dash (đã sửa F10). RAM nginx 74.7 → 87.6 MiB.
 - **Còn lại:** 2.2 (demo6 tcp/resolves/network, scanner, hồi quy), 2.3 SqliLabPostgresTest, 2.4 demo-checklist, 2.5 script R-RES-01 dry-run, docs R-RES-02, nghiệm thu, báo cáo.
 - WAF hiện ở trạng thái an toàn: prod On, lab On.
+- **2.2 (xong, commit `1d3a168` `3d3da56`):**
+  - Hiệu chuẩn trên `nhom9/blog-api:local` (`raw/24-calibration.txt`): exit 28 có `time_connect` > 0 là ĐÃ KẾT NỐI (server im lặng). Công cụ cũ coi là "bị chặn".
+  - Thêm `netprobe.sh` (3 trạng thái); `test-netprobe.sh` 19/19 trên bash và dash.
+  - Đo lại Demo 6: 59/0, **không có vi phạm cô lập**.
+  - Scanner fail-closed (exit 2); self-test 10/10 trên bash và dash; quét thật `evidence/` 0/56 file.
+  - Ghi chú: self-test ban đầu chứa sẵn JWT giả nên chính nó bị quét ra; đã sửa bằng cách ghép chuỗi lúc chạy.
+- **Tiếp theo:** 2.3 SqliLabPostgresTest, 2.4 checklist, 2.5 dry-run, tài liệu, nghiệm thu.
