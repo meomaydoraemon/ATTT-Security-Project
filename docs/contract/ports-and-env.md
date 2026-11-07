@@ -31,7 +31,7 @@ Lệnh demo dùng đúng tên service/container: `docker compose stop backend-no
 | `APP_DB_USERNAME` | `database` (script 02), 2 node (`DB_USERNAME`) | Mặc định `app_user` |
 | `APP_DB_PASSWORD` | `database` (script 02), 2 node (`DB_PASSWORD`) | Ngẫu nhiên, tối thiểu 24 ký tự |
 | `JWT_SECRET` | 2 node prod | Base64 của >= 32 byte; backend từ chối khởi động nếu sai |
-| `WAF_MODE` | `nginx-waf` | `On` (mặc định) hoặc `DetectionOnly` |
+| `WAF_MODE` | không service nào | **Ngừng dùng** (D12): prod luôn On; lab đổi bằng `sh scripts/waf-mode.sh lab On\|DetectionOnly` |
 | `HTTPS_PORT` | `nginx-waf` | Mặc định 443; chỉ đổi cổng, luôn bind 127.0.0.1 |
 | `SQLI_LAB_READER_PASSWORD` | `database` (script 04) | Tồn dư R-RES-01; node prod không còn dùng |
 | `LAB_JWT_SECRET` | `lab-backend` | Base64 >= 32 byte, **khác `JWT_SECRET`** |

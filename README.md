@@ -47,7 +47,7 @@ sh scripts/lab.sh down     # tắt và xóa 2 container lab; prod vẫn chạy
 
 Tài khoản lab giống bảng [Tài khoản thử nghiệm](#tài-khoản-thử-nghiệm), nhưng nằm trong `lab-db` riêng. Lab tắt thì listener 9443 trả `503` JSON, prod vẫn chạy bình thường.
 Không dùng `docker compose --profile lab down`: lệnh đó dừng cả prod. `lab.sh` kiểm tra lại sau mỗi lệnh rằng container prod không bị đổi.
-Demo 3 đổi chế độ WAF cho toàn bộ Nginx (cả listener prod) rồi trả về `On`. Điều này chỉ chấp nhận được ở chế độ Local, khi không có tunnel hay truy cập từ ngoài.
+WAF của listener prod luôn `On` (không có lệnh, biến hay file nào đổi được). Chỉ listener lab đổi tạm sang DetectionOnly cho Demo 3 (`sh scripts/waf-mode.sh lab DetectionOnly|On`, reload Nginx, không tạo lại container). Container khởi động lại thì lab tự về On.
 
 ## Chạy hệ thống
 
@@ -94,11 +94,7 @@ sh tests/demo/run-all.sh
 
 Runner có regression offline kiểm tra log thiếu/rỗng, RID thiếu và Docker/WAF mode lỗi; thiếu evidence phải FAIL. Regression Java nằm tại `AuditFixRegressionTest.java`.
 
-**Đưa dữ liệu demo về ban đầu:** dùng `sh scripts/lab.sh reset` (chỉ lab, không đụng prod). Lệnh dưới đây **xóa volume DB prod và log**; chỉ dùng khi đã xác minh đúng project, chấp nhận mất dữ liệu prod, và sau khi sửa file trong `database/init/`:
-
-```bash
-sh scripts/reset-demo.sh --yes
-```
+**Đưa dữ liệu demo về ban đầu:** dùng `sh scripts/lab.sh reset` (chỉ lab, không đụng prod). Không dùng `scripts/reset-demo.sh` hay `docker compose down -v` để chữa lỗi demo: cả hai **xóa volume DB prod**.
 
 Trước buổi trình bày đọc [docs/demo-checklist.md](docs/demo-checklist.md): việc cần làm, lưu ý khi demo và bảng
 xử lý sự cố.
@@ -128,8 +124,8 @@ Demo 1 và 5 chạy trên listener prod. Demo 2, 3, 4 chạy trên listener lab 
 | Bổ sung | `tests/demo/demo5-ratelimit-audit.sh` | Brute-force đăng nhập bị `429`; IP giả trong `X-Forwarded-For` không vào audit log; 1 request ID xuyên suốt Nginx, WAF, backend; Swagger, actuator và cổng 80 không mở ra ngoài |
 | 6. Cô lập lab | `tests/demo/demo6-isolation.sh` | Token lab bị prod từ chối (`401`) và ngược lại; 4 route `/vuln` trả `404` trên prod, cả qua gateway lẫn khi gọi thẳng node; lab-backend không phân giải và không kết nối được DB prod; chỉ nginx-waf gắn nhiều mạng; secret khác nhau; mật khẩu/token không vào log; checksum dữ liệu prod không đổi |
 
-Demo 3 đổi chế độ WAF bằng `sh scripts/waf-mode.sh DetectionOnly` và trả lại bằng `sh scripts/waf-mode.sh On`
-(script demo tự làm việc này). DetectionOnly là cấu hình thí nghiệm chủ động không chặn để đo lớp sau, không phải kỹ thuật bypass WAF.
+Demo 3 đổi chế độ WAF của riêng listener lab bằng `sh scripts/waf-mode.sh lab DetectionOnly`, trả lại bằng `sh scripts/waf-mode.sh lab On`
+(script demo tự làm việc này, kể cả khi bị Ctrl+C; prod vẫn chặn trong suốt demo). DetectionOnly là cấu hình thí nghiệm chủ động không chặn để đo lớp sau, không phải kỹ thuật bypass WAF.
 
 Kiểm thử thủ công: Postman trong `tests/postman/` (phủ toàn bộ API), mẫu request Burp trong `tests/burp/`
 (hướng dẫn trong [tests/burp/README.md](tests/burp/README.md)).
@@ -163,8 +159,8 @@ CSATTT-BTL--Nhom9/
 ├── scripts/
 │   ├── init-env.sh                    # TV1 (tạo thư mục logs/, sinh .env với mật khẩu, khóa ngẫu nhiên)
 │   ├── preflight.sh                   # TV1 (kiểm tra nhanh toàn hệ thống trước khi trình bày)
-│   ├── reset-demo.sh                  # TV1 (xóa dữ liệu, dựng lại sạch với dữ liệu mẫu gốc)
-│   ├── waf-mode.sh                    # TV2 (đổi chế độ WAF On / DetectionOnly)
+│   ├── reset-demo.sh                  # TV1 (CẢNH BÁO: xóa volume DB prod và log; không dùng để chữa lỗi demo)
+│   ├── waf-mode.sh                    # TV2 (xem chế độ WAF prod/lab; chỉ đổi được lab On / DetectionOnly)
 │   └── waf-audit.sh                   # TV2 (xem modsec_audit.log theo request ID)
 ├── docs/
 │   ├── decisions.md                   # Cả nhóm đề xuất, TV1 chốt (quy ước kỹ thuật chung)
@@ -183,7 +179,6 @@ CSATTT-BTL--Nhom9/
 │       ├── main.conf                  # TV2 (thứ tự nạp luật)
 │       ├── modsecurity.conf           # TV2 (SecRuleEngine On, JSON body processor, modsec_audit.log)
 │       ├── crs-tuning.conf            # TV2 (paranoia level, ngưỡng, method, content type, ngoại lệ)
-│       ├── mode/                      # TV2 (On.conf, DetectionOnly.conf, chọn bằng WAF_MODE)
 │       └── custom-rules/              # TV2 (đúng 2 luật tùy chỉnh: 100100, 100200)
 ├── backend/                           # TV3 (Spring Boot 3.2.5 / Java 21; cụm /secure và /vuln trong src/.../controller, demo)
 │   ├── Dockerfile, pom.xml, src/      # TV3 (test cặp /secure – /vuln: src/test/.../PostSecureVulnPairIntegrationTest.java)

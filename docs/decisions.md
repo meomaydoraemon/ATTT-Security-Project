@@ -24,7 +24,7 @@ Các quyết định đã chốt cho hệ thống. Cập nhật lần cuối: 27
 - Kiểm tra đã tải đúng bản: `docker images --digests owasp/modsecurity-crs`, so cột **DIGEST** với digest trên. Không so cột IMAGE ID: giá trị này khác nhau tùy chế độ lưu image của Docker (containerd hay bản cũ), dù cùng một image.
 - Bỏ qua entrypoint sinh cấu hình của image; nhóm tự quản lý `nginx/nginx.conf` và `nginx/modsecurity/*` để cấu hình nằm trọn trong Git.
 - Image chạy nginx bằng user không đặc quyền: nghe 8080/8443 trong container, compose map ra 80/443; `cap_drop: ALL`, `no-new-privileges`.
-- `SecRuleEngine On` đặt trong `modsecurity.conf` (đúng TV2.2). Demo 3 ghi đè thành `DetectionOnly` qua file `mode/<WAF_MODE>.conf` nạp ngay sau đó.
+- `SecRuleEngine On` đặt trong `modsecurity.conf` (đúng TV2.2), áp cho mọi listener. Từ T-003 (D12) chỉ listener lab có override DetectionOnly tạm thời; file `mode/<WAF_MODE>.conf` cũ đã bỏ.
 - WAF chặn: Nginx trả `403` JSON kèm `X-Blocked-By: waf`. Backend không bao giờ đặt header này, nên phân biệt được với 403 phân quyền của backend.
 
 ## D4. Cặp vuln/secure (TV3.3)
@@ -49,11 +49,11 @@ Cụm `/secure/posts` dùng chung tầng Service (có Ownership Check) với rou
 - **Audit log tập trung**: mọi log ghi ra thư mục `logs/` trên máy host: `logs/nginx/`, `logs/waf/modsec_audit.log`, `logs/backend-node-1/audit.log`, `logs/backend-node-2/audit.log`. Mẫu log backend có `reqId`, `user` và `ip` (IP client thật), gồm cả sự kiện đăng nhập, bị từ chối 401/403, sửa/xóa dữ liệu.
 - `modsec_audit.log` (JSON) chỉ ghi phần A, H, K, Z: bỏ header/body request; matched data vẫn cần rà soát và che dữ liệu nhạy cảm trước khi chia sẻ.
 - File audit của backend bỏ dòng healthcheck nội bộ của Docker (`/actuator/health` từ 127.0.0.1, mỗi 10 giây) bằng bộ lọc `LocalHealthCheckLogFilter`, chỉ gắn vào file; healthcheck đi qua Nginx vẫn được ghi. Thời gian trong file ghi kèm múi giờ (`Z` = UTC).
-- Chuyển chế độ WAF bằng `sh scripts/waf-mode.sh On|DetectionOnly`: kiểm tra giá trị hợp lệ, in chế độ đang chạy, cảnh báo khi đang DetectionOnly.
+- Xem chế độ WAF bằng `sh scripts/waf-mode.sh` (in prod và lab); chỉ đổi được lab: `sh scripts/waf-mode.sh lab On|DetectionOnly` (D12).
 
 ## D6. WAF: chế độ, ngưỡng, luật tùy chỉnh
 
-- `WAF_MODE=On` mặc định; `DetectionOnly` cho Demo 3 và dò false positive.
+- Prod luôn `On`. Lab `On` mặc định; `DetectionOnly` chỉ tạm thời cho Demo 3. Biến `WAF_MODE` đã ngừng dùng (D12).
 - Paranoia Level 1, ngưỡng anomaly 5 (một luật CRITICAL là chặn). Cho phép thêm `PUT`, `DELETE`.
 - JSON Body Inspection: body `application/json` được phân tích JSON; mỗi trường thành `ARGS:json.<tên>`. Body JSON hỏng bị chặn `400`.
 - **Đúng 2 luật tùy chỉnh** trong `custom-rules/nhom9-custom.conf` (TV2.3):
@@ -97,4 +97,11 @@ Cụm `/secure/posts` dùng chung tầng Service (có Ownership Check) với rou
 - **Vận hành:** `sh scripts/lab.sh up|down|reset|status`. Demo 1 và 5 chạy trên prod; Demo 2, 3, 4 trên lab; Demo 6 kiểm tra cô lập. Bằng chứng nằm trong `evidence/T-002/`.
 - **Tồn dư chưa xử lý:**
   - **R-RES-01:** cluster DB prod vẫn có database `sqli_lab`, role `sqli_demo_reader` và cần `SQLI_LAB_READER_PASSWORD`, vì volume prod đã được khởi tạo cùng `04`. Muốn gỡ phải khởi tạo lại DB prod mà không chạy `04`, cần người dùng đồng ý vì có dữ liệu.
-  - **R-RES-02:** `waf-mode.sh` đổi chế độ WAF cho toàn bộ Nginx, kể cả listener prod (Demo 3). Chỉ chấp nhận ở chế độ Local, không có tunnel.
+  - **R-RES-02:** `waf-mode.sh` đổi chế độ WAF cho toàn bộ Nginx, kể cả listener prod (Demo 3). **Đã đóng ở T-003, xem D12.**
+
+## D12. WAF prod luôn On, chỉ lab đổi chế độ (T-003, 07/11/2026). Đóng R-RES-02
+
+- Bỏ mount `mode/${WAF_MODE}.conf` và include `modsecurity-mode.conf` trong `main.conf`. Chuỗi luật của prod chỉ có `modsecurity.conf` (`SecRuleEngine On`) + CRS + luật nhóm. Không còn biến, file hay lệnh nào đổi được prod.
+- Server lab (9443) `include /etc/nginx/waf-lab/*.conf` **trước** `listener-common.conf`. Thư mục này là tmpfs trong `nginx-waf` (mode 1777, 16k). `sh scripts/waf-mode.sh lab DetectionOnly` ghi một dòng `modsecurity_rules 'SecRuleEngine DetectionOnly';`, chạy `nginx -t` rồi `nginx -s reload`; `lab On` xóa file rồi reload. `nginx -t` lỗi thì gỡ override và giữ cấu hình đang chạy. Không có file, hoặc container khởi động lại: lab On.
+- Thứ tự là bắt buộc. Đã đo: đặt override **sau** `modsecurity_rules_file` thì không có tác dụng (libmodsecurity giữ `SecRuleEngine` của lần nạp trước khi luật được nạp thành nhiều lần).
+- Bằng chứng runtime: `tests/demo/waf-listener-proof.sh` (đối chiếu status + `X-Blocked-By`, audit `is_interrupted`, log backend đúng môi trường theo `X-Request-ID`). Khi lab DetectionOnly, prod vẫn chặn; prod nhận tải lành tính liên tục trong lúc đổi chế độ, không có mã khác 200. Demo 3 trap INT/TERM để trả lab về On; nếu bị kill -9 thì preflight và `run-all.sh` FAIL kèm lệnh `sh scripts/waf-mode.sh lab On`. Báo cáo: `evidence/T-003/REPORT.md`.
