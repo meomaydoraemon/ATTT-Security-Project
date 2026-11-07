@@ -117,3 +117,9 @@ Bắt đầu: 2026-11-07. Không chứa secret.
   4. **2.5:** `sh scripts/rres01-prod-db-cleanup.sh` (dry-run) và lưu raw.
   5. **Nghiệm thu mục 3:** sh -n; guard, netprobe, scanner dưới bash và dash; `nginx -t`; preflight; run-all (so 111); lab down + Demo 1/5 + 503 + prod chặn; lab up + reset + checksum; quét evidence.
   6. Viết `evidence/T-003/REPORT.md`, tag `checkpoint/t003-local-ready`.
+- **T-003 xong:**
+  - 2.3 PASS 5/5 trên lab-db; 2.5 đã dry-run (không apply).
+  - Nghiệm thu lần 1 FAIL (Demo 6 nạp netprobe bằng đường dẫn tương đối); sửa ở `c31ede9`.
+  - Nghiệm thu lần 2 trên `c31ede9`: mọi bước exit 0, run-all 120/0, preflight 26/0/0, scan 0.
+  - Báo cáo: `T-003/REPORT.md`. Tag `checkpoint/t003-local-ready`. Chưa push.
+- **Tồn dư:** R-RES-01 chờ người dùng đồng ý.

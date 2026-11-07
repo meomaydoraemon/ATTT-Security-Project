@@ -40,3 +40,5 @@ Vì Kết luận B đạt nên **không cần Giai đoạn C** (T-001b). Lỗi F
 - `SqliLabPostgresTest`.
 - Các bộ PowerShell trong `backend/scripts`.
 - Guard chạy bằng dash: đã chạy, **FAIL** do F10. Đây là lỗi của test, ngoài tiêu chí.
+
+> Đính chính sau này: xem [T-003/REPORT.md](../T-003/REPORT.md) mục 5.

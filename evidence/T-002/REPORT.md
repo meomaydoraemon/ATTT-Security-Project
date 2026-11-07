@@ -51,3 +51,5 @@
 - **Dữ liệu prod đã đổi từ T-001:** bài 3 trong DB prod mang tiêu đề "B da sua bai cua A". Đây là do Demo 4 chạy **trong T-001**, khi baseline (D2) còn để `/vuln` trên node prod. Kể từ T-002, checksum prod không đổi. Đây là dữ liệu giả; muốn khôi phục phải khởi tạo lại volume prod, việc này cần người dùng đồng ý và có thể gộp với R-RES-01.
 - **R-RES-01, R-RES-02:** ghi trong `docs/decisions.md` mục D11.
 - **`docs/demo-checklist.md` chưa cập nhật** theo chế độ Local (ngoài phạm vi D7). Một số mục vẫn nhắc `reset-demo.sh` cho Demo 4; nên đổi thành `lab.sh reset`.
+
+> Đính chính sau này: xem [T-003/REPORT.md](../T-003/REPORT.md) mục 5.
