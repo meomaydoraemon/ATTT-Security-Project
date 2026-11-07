@@ -16,7 +16,7 @@ direct() {
     [ -n "$_d" ] && set -- "$@" -H 'Content-Type: application/json' --data-binary "$_d"
     dexec nginx-waf "$@" "http://$_n:8080$_p" || true
 }
-. "$(dirname "$0")/netprobe.sh"   # np_tcp / np_resolves / np_network: được | không | LỖI ĐO
+. "$ROOT/tests/demo/netprobe.sh"   # np_tcp / np_resolves / np_network: được | không | LỖI ĐO
 # Hash SHA256 của JWT_SECRET trong container; container thiếu biến thì in EMPTY
 secret_hash() {
     _h=$(dexec "$1" sh -c 'test -n "${JWT_SECRET:-}" && printf %s "$JWT_SECRET"' | sha256sum | cut -d' ' -f1) || true
