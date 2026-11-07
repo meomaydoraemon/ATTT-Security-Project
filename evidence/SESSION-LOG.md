@@ -102,3 +102,18 @@ Bắt đầu: 2026-11-07. Không chứa secret.
   - Scanner fail-closed (exit 2); self-test 10/10 trên bash và dash; quét thật `evidence/` 0/56 file.
   - Ghi chú: self-test ban đầu chứa sẵn JWT giả nên chính nó bị quét ra; đã sửa bằng cách ghép chuỗi lúc chạy.
 - **Tiếp theo:** 2.3 SqliLabPostgresTest, 2.4 checklist, 2.5 dry-run, tài liệu, nghiệm thu.
+- **2.4 (xong, commit `4f2f1b2`):**
+  - Preflight chẩn đoán đăng nhập theo mã lỗi, chỉ đọc (đã có từ `e8c618f`).
+  - Viết lại `demo-checklist.md` cho chế độ Local, lệnh dạng cmd.
+  - README không còn hướng dẫn chạy `reset-demo.sh`.
+  - Thêm D12, đóng R-RES-02.
+- **2.5 (script xong, commit `6562b4b`):** `scripts/rres01-prod-db-cleanup.sh` mặc định dry-run. R-RES-01 = CHƯA ĐỒNG Ý nên không --apply. **Dry-run CHƯA chạy (UNVERIFIED)** vì Docker tắt.
+- **SỰ CỐ:** từ lúc chuẩn bị 2.3, Docker Engine không phản hồi (`dockerDesktopLinuxEngine` không tồn tại). Lần đo mục tiêu 2.3 là LỖI ĐO (`raw/27-sqlitest-target-LOI-DO-docker-down.txt`); không chạy gì trên DB.
+- **Trạng thái an toàn:** WAF prod On cố định. Override lab nằm trên tmpfs, nên khi Docker chạy lại thì lab On. Không có thay đổi nào chưa commit.
+- **NỐI LẠI (khi Docker chạy):**
+  1. `docker compose up -d --wait` rồi `sh scripts/lab.sh up`.
+  2. `sh scripts/waf-mode.sh`: phải là prod On, lab On.
+  3. **2.3:** xác minh đích `lab-db` (label project, tmpfs, chỉ lab_net, có `sqli_lab` và role reader, chỉ phân giải được `lab-db`). Chạy `docker run --rm --network nhom9-local_lab_net -v nhom9-local-m2:/root/.m2`, Maven offline `-o -Dtest=SqliLabPostgresTest`, env `SQLI_LAB_TEST_ENABLED=true`, `SQLI_DEMO_DB_URL=jdbc:postgresql://lab-db:5432/sqli_lab`, `SQLI_DEMO_DB_USERNAME=sqli_demo_reader`, `-e SQLI_DEMO_DB_PASSWORD` lấy từ `LAB_SQLI_READER_PASSWORD`. Quét secret output, rồi `lab.sh reset` và kiểm checksum prod.
+  4. **2.5:** `sh scripts/rres01-prod-db-cleanup.sh` (dry-run) và lưu raw.
+  5. **Nghiệm thu mục 3:** sh -n; guard, netprobe, scanner dưới bash và dash; `nginx -t`; preflight; run-all (so 111); lab down + Demo 1/5 + 503 + prod chặn; lab up + reset + checksum; quét evidence.
+  6. Viết `evidence/T-003/REPORT.md`, tag `checkpoint/t003-local-ready`.
