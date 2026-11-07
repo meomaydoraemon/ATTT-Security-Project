@@ -19,6 +19,8 @@ if [ "$(sh ../../scripts/waf-mode.sh 2>/dev/null | tr '\n' ' ')" != "WAF prod: O
 fi
 FAILED=""
 sh ./test-evidence-guards.sh
+sh ./test-netprobe.sh
+sh ../../evidence/test-scan-secrets.sh
 # INV-12: checksum dữ liệu prod trước các demo, Demo 6 so lại ở cuối
 PROD_CHECKSUM_BEFORE=$(sh ./prod-checksum.sh)
 export PROD_CHECKSUM_BEFORE

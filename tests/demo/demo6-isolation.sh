@@ -16,13 +16,7 @@ direct() {
     [ -n "$_d" ] && set -- "$@" -H 'Content-Type: application/json' --data-binary "$_d"
     dexec nginx-waf "$@" "http://$_n:8080$_p" || true
 }
-# tcp FROM_CONTAINER IP: "được" nếu mở được TCP tới IP:5432, "không" nếu không kết nối được
-tcp() {
-    _rc=0; dexec "$1" curl -s -o /dev/null --connect-timeout 3 --max-time 5 "http://$2:5432/" >/dev/null 2>&1 || _rc=$?
-    case $_rc in 7|28) echo không ;; *) echo được ;; esac
-}
-resolves() { if dexec "$1" getent hosts "$2" >/dev/null 2>&1; then echo được; else echo không; fi; }
-ip_of() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$1" | tr -d ' \r'; }
+. "$(dirname "$0")/netprobe.sh"   # np_tcp / np_resolves / np_network: được | không | LỖI ĐO
 # Hash SHA256 của JWT_SECRET trong container; container thiếu biến thì in EMPTY
 secret_hash() {
     _h=$(dexec "$1" sh -c 'test -n "${JWT_SECRET:-}" && printf %s "$JWT_SECRET"' | sha256sum | cut -d' ' -f1) || true
@@ -92,21 +86,29 @@ for n in backend-node-1 backend-node-2; do
     check "Gọi thẳng $n /v3/api-docs" 404 "$(direct "$n" GET /v3/api-docs)"
 done
 
-title "X-03 / INV-06: lab_net cô lập với DB prod"
-DBIP=$(ip_of database); LABDBIP=$(ip_of lab-db)
-printf '%s\n%s\n' "$DBIP" "$LABDBIP" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}' || fatal "Không lấy được IP của database/lab-db."
-note "IP database=$DBIP, lab-db=$LABDBIP"
-check "Kiểm tra dương: nginx-waf mở được TCP tới database" được "$(tcp nginx-waf "$DBIP")"
-check "Kiểm tra dương: nginx-waf mở được TCP tới lab-db" được "$(tcp nginx-waf "$LABDBIP")"
-check "X-03a lab-backend phân giải tên 'database'" không "$(resolves lab-backend database)"
-check "X-03b lab-backend mở TCP tới IP thật của database:5432" không "$(tcp lab-backend "$DBIP")"
-check "X-03d backend-node-1 phân giải tên 'lab-db'" không "$(resolves backend-node-1 lab-db)"
-check "X-03d backend-node-1 mở TCP tới lab-db:5432" không "$(tcp backend-node-1 "$LABDBIP")"
+title "X-03 / INV-06: lab_net cô lập với DB prod (đo trong chính container kiểm tra)"
+PROJECT=$(np_project); LAB_NET=$(np_network "$PROJECT" lab_net); PROD_NET=$(np_network "$PROJECT" internal_net)
+note "project=$PROJECT lab_net=$LAB_NET internal_net=$PROD_NET"
+check "Xác định được network lab/prod qua label của project" "có có"     "$([ -n "$LAB_NET" ] && echo có || echo 'LỖI ĐO') $([ -n "$PROD_NET" ] && echo có || echo 'LỖI ĐO')"
+DBIP=$(np_ip database "$PROD_NET"); LABDBIP=$(np_ip lab-db "$LAB_NET")
+note "IP database@internal_net=$DBIP, lab-db@lab_net=$LABDBIP"
+check "IP database trên internal_net hợp lệ" có "$(np_ipv4 "$DBIP" && echo có || echo 'LỖI ĐO')"
+check "IP lab-db trên lab_net hợp lệ" có "$(np_ipv4 "$LABDBIP" && echo có || echo 'LỖI ĐO')"
+# Kiểm tra dương và âm cùng container, cùng công cụ
+check "Kiểm tra dương: lab-backend phân giải 'lab-db'" được "$(np_resolves lab-backend lab-db)"
+check "Kiểm tra dương: lab-backend mở TCP tới lab-db:5432" được "$(np_tcp lab-backend "$LABDBIP" 5432)"
+check "X-03a lab-backend phân giải tên 'database'" không "$(np_resolves lab-backend database)"
+check "X-03b lab-backend mở TCP tới IP thật của database:5432" không "$(np_tcp lab-backend "$DBIP" 5432)"
+check "Kiểm tra dương: backend-node-1 phân giải 'database'" được "$(np_resolves backend-node-1 database)"
+check "Kiểm tra dương: backend-node-1 mở TCP tới database:5432" được "$(np_tcp backend-node-1 "$DBIP" 5432)"
+check "X-03d backend-node-1 phân giải tên 'lab-db'" không "$(np_resolves backend-node-1 lab-db)"
+check "X-03d backend-node-1 mở TCP tới lab-db:5432" không "$(np_tcp backend-node-1 "$LABDBIP" 5432)"
 MULTI=""
 for c in nginx-waf backend-node-1 backend-node-2 database lab-backend lab-db; do
-    nets=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c" | tr -d '\r')
+    nets=$(np_networks "$c")
+    [ -n "$nets" ] || nets="LỖI ĐO"
     [ "$(echo $nets | wc -w)" -gt 1 ] && MULTI="$MULTI $c"
-    case $c in lab-backend|lab-db) check "X-03c $c chỉ gắn lab_net" "nhom9-local_lab_net" "$(echo $nets)" ;; esac
+    case $c in lab-backend|lab-db) check "X-03c tập network của $c đúng bằng {lab_net}" "${LAB_NET:-?}" "$nets" ;; esac
 done
 check "X-03c container gắn nhiều mạng" " nginx-waf" "$MULTI"
 
